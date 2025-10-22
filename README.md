@@ -63,3 +63,7 @@
 6. Kodu karta yükle, olmazsa IDE'yi kapatıp aç.
 
 Not: Baud ayarını koddaki ile aynı yapmayı unutma ve dokunmatik için serial monitor'ü kontrol et. Eğer Dokunmatik algılandı dönütü almazsan **I2C Scanner** ile I2C adresini öğren ve gfx.conf.h dosyasındaki `cfg.i2c_addr   = 0x14;` satırını güncelle.
+
+## İletişim
+
+### metehangnn@outlook.com
