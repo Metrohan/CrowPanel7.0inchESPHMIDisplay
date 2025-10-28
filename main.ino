@@ -3,37 +3,38 @@
 #include <lvgl.h>
 #include "gfx_conf.h"
 #include "ui.h"
-#include "ui_events.h"
 
+LGFX tft;
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[screenWidth * 10];
+static lv_disp_drv_t disp_drv;
+static lv_indev_drv_t indev_drv;
 
-LGFX tft; 
-
-static lv_color_t buf[screenWidth * 10]; 
-static lv_display_t * display; 
-static lv_indev_t * indev;
-
-void my_disp_flush(lv_display_t * disp, const lv_area_t *area, uint8_t *px_map)
+/* --- LVGL flush callback --- */
+void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
 {
     tft.pushImageDMA(
-        area->x1, area->y1, 
-        area->x2 - area->x1 + 1, 
-        area->y2 - area->y1 + 1, 
-        (lgfx::rgb565_t*)px_map
+        area->x1, area->y1,
+        area->x2 - area->x1 + 1,
+        area->y2 - area->y1 + 1,
+        (lgfx::rgb565_t *)color_p
     );
-    lv_display_flush_ready(disp);
+    lv_disp_flush_ready(disp);
 }
 
-void my_touchpad_read(lv_indev_t * indev_drv, lv_indev_data_t * data)
+/* --- Dokunmatik okuma callback --- */
+void my_touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
-    uint16_t touchX, touchY;
-    bool touched = tft.getTouch(&touchX, &touchY);
+    uint16_t x, y;
+    bool touched = tft.getTouch(&x, &y); 
 
-    if (!touched) {
-        data->state = LV_INDEV_STATE_RELEASED;
+    if (touched) {
+        data->state = LV_INDEV_STATE_PR;
+        data->point.x = x;
+        data->point.y = y;
+        Serial.printf("[TOUCH] Dokunma algılandı! X=%d Y=%d\n", x, y);
     } else {
-        data->state = LV_INDEV_STATE_PRESSED;
-        data->point.x = touchX;
-        data->point.y = touchY;
+        data->state = LV_INDEV_STATE_REL;
     }
 }
 
@@ -41,36 +42,62 @@ void setup()
 {
     Serial.begin(115200);
     delay(1000);
+    Serial.println("\n\n========== SISTEM BASLATILIYOR ==========");
 
-    Serial.println("Ekran başlatılıyor...");
-    tft.begin();
+    Serial.println("LGFX (tft.begin()) baslatiliyor...");
+    bool init_ok = tft.begin();
+    
+    if (init_ok) {
+        Serial.println("==> tft.begin() BASARILI OLDU.");
+    } else {
+        Serial.println("!!! tft.begin() BASARISIZ OLDU !!!");
+        while(1) { delay(10); }
+    }
+    
+    if (tft.touch()) {
+        Serial.println("==> LovyanGFX: Dokunmatik surucu bulundu ve aktif.");
+    } else {
+        Serial.println("!!! LovyanGFX: Dokunmatik surucu BULUNAMADI !!!");
+        while(1) { delay(10); }
+    }
 
     tft.setBrightness(160);
-
     tft.fillScreen(TFT_DARKGREY);
 
     lv_init();
 
-    display = lv_display_create(screenWidth, screenHeight);
-    lv_display_set_buffers(display, buf, NULL, sizeof(buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
-    lv_display_set_flush_cb(display, my_disp_flush);
+    // === DISPLAY ===
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
 
-    indev = lv_indev_create();
-    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(indev, my_touchpad_read);
-    lv_indev_set_display(indev, display);
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = screenWidth;
+    disp_drv.ver_res = screenHeight;
+    disp_drv.flush_cb = my_disp_flush;
+    disp_drv.draw_buf = &draw_buf;
 
-    ui_init(); 
+    lv_disp_drv_register(&disp_drv);
 
-    Serial.println("Kurulum tamamlandı. Dokunmatik test başlıyor...");
+    // === TOUCH INPUT ===
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = my_touchpad_read;
+    lv_indev_drv_register(&indev_drv);
+
+    ui_init();
+    
+    Serial.println("========== KURULUM TAMAMLANDI ==========");
+    Serial.printf("Ekran boyutu: %d x %d\n", screenWidth, screenHeight);
+    Serial.println("Ekrana dokunun...\n");
+
+    pinMode(38, OUTPUT);
+    digitalWrite(38, LOW);
+    delay(20);
+    digitalWrite(38, HIGH);
+    delay(100);
 }
 
 void loop()
 {
     lv_timer_handler();
     delay(5);
-    uint16_t x, y;
-    if (tft.getTouch(&x, &y)) {
-        Serial.printf("Dokunma algılandı! X=%d, Y=%d\n", x, y);
-    }
 }
