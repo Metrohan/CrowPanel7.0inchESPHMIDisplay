@@ -164,7 +164,6 @@ lv_obj_t* create_ui_button(lv_obj_t * parent, const char * text, const char * ev
     lv_obj_set_style_text_opa(label, LV_OPA_COVER, 0);
 
     Serial.printf("[UI] Buton olusturuldu: %s\n", text);
-    add_button_press_effect(btn);
     
     return btn;
 }
