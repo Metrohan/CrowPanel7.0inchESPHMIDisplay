@@ -5,6 +5,8 @@
 #include "ui.h"
 #include <TJpg_Decoder.h>
 #include <WiFi.h>
+#include <SPIFFS.h>
+#include "ilablogo.c"
 
 #define BAUD_RATE 2000000
 #define BACKLIGHT_PIN 38
@@ -13,14 +15,27 @@
 #define MAX_JPEG_SIZE (80 * 1024)
 uint8_t jpeg_buffer[MAX_JPEG_SIZE];
 volatile bool frame_ready = false;
+volatile bool processing_frame = false; // Prevent concurrent access
 size_t jpeg_size = 0;
 
 // Eski değişkenler (UI kodunuz bunları kullanıyor olabilir)
-bool capture_requested = false;
-#define IMG_W 160
-#define IMG_H 120
+bool capture_requested = false; // UI sets this when user presses capture
+// Removed blocking capture_in_progress approach; replaced by non-blocking chunk writer
+uint32_t capture_counter = 0;
 #define RAW_BUFFER_SIZE (IMG_W * IMG_H * 2)
 uint8_t frame_buffer[RAW_BUFFER_SIZE];
+
+// New non-blocking capture state (Step 1)
+uint8_t *capture_buffer = nullptr;          // Holds a copied JPEG for asynchronous write
+size_t capture_size = 0;                    // Size of the copied JPEG
+volatile bool capture_write_pending = false;// Indicates a file write in progress across loops
+size_t capture_write_offset = 0;            // Current write offset into capture_buffer
+File capture_file;                          // SPIFFS file handle for ongoing write
+uint32_t capture_start_ms = 0;              // Timestamp when capture initiated (for debug/metrics)
+const size_t CAPTURE_CHUNK_SIZE = 4096;     // Per-loop write chunk size to avoid long blocking
+
+// Tekil UI frame sayacı tanımı (ui.h'de extern olarak bildirildi)
+uint32_t ui_total_frames_counter = 0;
 
 // LVGL image descriptor
 lv_img_dsc_t jpeg_img_dsc;
@@ -88,10 +103,15 @@ void prepare_chunk_map(size_t total_size) {
 
 // ---------- TJpg Decoder Callback ----------
 bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-  if (decoded_rgb565 && x >= 0 && y >= 0) {
+  if (decoded_rgb565 && x >= 0 && y >= 0 && w > 0 && h > 0) {
     for (int row = 0; row < h; row++) {
-      uint32_t offset = ((y + row) * decoded_width + x);
-      if (offset + w <= decoded_width * decoded_height) {
+      uint32_t dest_y = y + row;
+      if(dest_y >= decoded_height) break;
+      
+      uint32_t offset = (dest_y * decoded_width + x);
+      uint32_t max_offset = decoded_width * decoded_height;
+      
+      if (offset < max_offset && (offset + w) <= max_offset) {
         uint16_t* dest = (uint16_t*)(decoded_rgb565 + offset * 2);
         memcpy(dest, bitmap + row * w, w * 2);
       }
@@ -136,6 +156,8 @@ void process_tcp_stream() {
     if(!client || !client.connected()) {
         client = server.available();
         if(client && client.connected()) {
+            client.setNoDelay(true);
+            client.setTimeout(5000); // 5 second timeout
             Serial.println("[INFO] Client connected");
         }
     }
@@ -227,10 +249,10 @@ void process_tcp_stream() {
             payload[0] = b;
             size_t read_count = 1;
 
-            // Kalan payload'ı oku
+            // Kalan payload'ı oku (optimized)
             unsigned long timeout_start = millis();
             while(read_count < chunk_len) {
-                if(millis() - timeout_start > 3000) {
+                if(millis() - timeout_start > 2000) { // Reduced timeout
                     Serial.printf("[TIMEOUT] Read %u/%u bytes\n", read_count, chunk_len);
                     free(payload);
                     send_nack(seq);
@@ -238,14 +260,17 @@ void process_tcp_stream() {
                     break;
                 }
 
-                if(client.available() > 0) {
-                    int n = client.read(payload + read_count, chunk_len - read_count);
+                int available = client.available();
+                if(available > 0) {
+                    size_t to_read = min((size_t)available, chunk_len - read_count);
+                    int n = client.read(payload + read_count, to_read);
                     if(n > 0) {
                         read_count += n;
-                        timeout_start = millis(); // Reset timeout
+                        timeout_start = millis();
                     }
+                } else {
+                    yield(); // Only yield when no data available
                 }
-                yield();
             }
 
             if(read_count != chunk_len) {
@@ -257,15 +282,7 @@ void process_tcp_stream() {
             // CRC check
             uint16_t calc_crc = crc16_ccitt(payload, chunk_len);
             if(calc_crc != sent_crc) {
-                Serial.printf("[CRC FAIL] seq=%u calc=%04X sent=%04X\n", seq, calc_crc, sent_crc);
-                
-                // Debug: İlk 16 byte'ı göster
-                Serial.print("[DEBUG] First 16 bytes: ");
-                for(int i = 0; i < 16 && i < chunk_len; i++) {
-                    Serial.printf("%02X ", payload[i]);
-                }
-                Serial.println();
-                
+                Serial.printf("[CRC FAIL] seq=%u\n", seq);
                 send_nack(seq);
                 free(payload);
                 magic_state = 0;
@@ -283,7 +300,11 @@ void process_tcp_stream() {
                 }
                 
                 send_ack(seq);
-                Serial.printf("[OK] Chunk %u/%u (%u bytes)\n", seq + 1, num_chunks, chunk_len);
+                
+                // Reduced logging
+                if(seq == 0 || seq == num_chunks - 1 || seq % 10 == 0) {
+                    Serial.printf("[OK] Chunk %u/%u\n", seq + 1, num_chunks);
+                }
             } else {
                 Serial.printf("[ERROR] Overflow pos=%u len=%u\n", pos, chunk_len);
                 send_nack(seq);
@@ -293,8 +314,9 @@ void process_tcp_stream() {
 
             // Frame complete?
             if(received_chunks && received_count >= num_chunks) {
+                jpeg_size = expected_frame_size;
                 frame_ready = true;
-                Serial.printf("[COMPLETE] Frame %u bytes\n", jpeg_size);
+                Serial.printf("[COMPLETE] Frame ready: %u bytes\n", jpeg_size);
                 free(received_chunks);
                 received_chunks = nullptr;
                 received_count = 0;
@@ -312,6 +334,15 @@ void setup() {
     Serial.begin(BAUD_RATE);
     delay(200);
     Serial.println("ESP32_READY");
+
+    // Initialize SPIFFS for photo storage
+    if(!SPIFFS.begin(true)) {
+        Serial.println("[ERROR] SPIFFS Mount Failed");
+    } else {
+        Serial.println("[INFO] SPIFFS Mounted");
+        Serial.printf("[INFO] SPIFFS Total: %u bytes, Used: %u bytes\n", 
+                      SPIFFS.totalBytes(), SPIFFS.usedBytes());
+    }
 
     // WiFi AP
     WiFi.mode(WIFI_AP);
@@ -355,29 +386,34 @@ void setup() {
 // ---------- Loop ----------
 void loop() {
     lv_timer_handler();
-    process_tcp_stream();
+    
+    // Process TCP stream only if not processing a frame or writing capture
+    if(!processing_frame && !capture_write_pending) {
+        process_tcp_stream();
+    }
 
-    if(frame_ready) {
-        Serial.println("[DECODE] Starting JPEG decode...");
+    if(frame_ready && !processing_frame && !capture_write_pending) {
+        processing_frame = true;
+        frame_ready = false;
         
         // JPEG decode et
         uint16_t w = 0, h = 0;
         if(TJpgDec.getJpgSize(&w, &h, jpeg_buffer, jpeg_size) == JDR_OK) {
-            Serial.printf("[INFO] JPEG size: %ux%u\n", w, h);
             
-            // RGB565 buffer ayır
-            if(decoded_rgb565) {
+            // Reuse buffer if same size
+            size_t buffer_size = w * h * 2;
+            if(decoded_rgb565 && (decoded_width != w || decoded_height != h)) {
                 free(decoded_rgb565);
                 decoded_rgb565 = nullptr;
             }
             
-            size_t buffer_size = w * h * 2;
-            decoded_rgb565 = (uint8_t*)malloc(buffer_size);
+            if(!decoded_rgb565) {
+                decoded_rgb565 = (uint8_t*)malloc(buffer_size);
+            }
             
             if(decoded_rgb565) {
                 decoded_width = w;
                 decoded_height = h;
-                memset(decoded_rgb565, 0, buffer_size);
                 
                 // Decode et
                 if(TJpgDec.drawJpg(0, 0, jpeg_buffer, jpeg_size) == JDR_OK) {
@@ -389,30 +425,104 @@ void loop() {
                     jpeg_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
                     jpeg_img_dsc.data = decoded_rgb565;
                     
-                    // UI güncelle
+                    // UI güncelle (single call)
                     lv_img_set_src(ui_camera_view, &jpeg_img_dsc);
-                    lv_obj_invalidate(ui_camera_view);
                     
-                    Serial.println("[SUCCESS] Frame displayed");
-                } else {
-                    Serial.println("[ERROR] JPEG decode failed");
-                    free(decoded_rgb565);
-                    decoded_rgb565 = nullptr;
+                    // UI frame counter'ını güncelle
+                    notify_frame_received_for_ui();
                 }
-            } else {
-                Serial.printf("[ERROR] RGB565 malloc failed (need %u bytes)\n", buffer_size);
             }
-        } else {
-            Serial.printf("[ERROR] Invalid JPEG (size: %u bytes)\n", jpeg_size);
         }
         
-        frame_ready = false;
+        processing_frame = false;
     }
 
-    if(capture_requested) {
-        Serial.println("[INFO] Capture requested (not implemented)");
-        capture_requested = false;
-    }
+        // Non-blocking capture trigger: copy JPEG buffer then write incrementally
+        if(capture_requested && !capture_write_pending) {
+            capture_requested = false;
+            if(jpeg_size > 0 && jpeg_size <= MAX_JPEG_SIZE) {
+                // Allocate or resize capture_buffer
+                if(capture_buffer && capture_size != jpeg_size) {
+                    free(capture_buffer);
+                    capture_buffer = nullptr;
+                }
+                if(!capture_buffer) {
+                    capture_buffer = (uint8_t*)malloc(jpeg_size);
+                }
+                if(capture_buffer) {
+                    capture_start_ms = millis();
+                    memcpy(capture_buffer, jpeg_buffer, jpeg_size);
+                    capture_size = jpeg_size;
+                    uint32_t copy_time = millis() - capture_start_ms;
+                    char filename[40];
+                    snprintf(filename, sizeof(filename), "/capture_%05u.jpg", capture_counter++);
+                    capture_file = SPIFFS.open(filename, FILE_WRITE);
+                    if(capture_file) {
+                        capture_write_pending = true;
+                        capture_write_offset = 0;
+                        Serial.printf("[CAPTURE] Start %s size=%u copy_ms=%u freeHeap=%u\n", filename, (unsigned)capture_size, copy_time, (unsigned)ESP.getFreeHeap());
+                        lv_label_set_text(ui_response_label, "Saving 0%...");
+                        lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
+                    } else {
+                        Serial.println("[CAPTURE] File open failed");
+                        lv_label_set_text(ui_response_label, "File Open Error");
+                        lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
+                        free(capture_buffer);
+                        capture_buffer = nullptr;
+                        capture_size = 0;
+                    }
+                } else {
+                    Serial.println("[CAPTURE] malloc failed for capture_buffer");
+                    lv_label_set_text(ui_response_label, "Memory Error");
+                    lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
+                }
+            } else {
+                lv_label_set_text(ui_response_label, "No Frame");
+                lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
+            }
+        }
 
-    delay(5);
+        // Incremental writer: write in CAPTURE_CHUNK_SIZE chunks per loop
+        if(capture_write_pending) {
+            size_t remaining = capture_size - capture_write_offset;
+            size_t to_write = remaining > CAPTURE_CHUNK_SIZE ? CAPTURE_CHUNK_SIZE : remaining;
+            if(to_write > 0) {
+                size_t written = capture_file.write(capture_buffer + capture_write_offset, to_write);
+                if(written == to_write) {
+                    capture_write_offset += written;
+                    // Progress update every ~25% or every chunk for small files
+                    uint8_t percent = (uint8_t)((capture_write_offset * 100UL) / capture_size);
+                    static uint8_t last_percent_shown = 0;
+                    if(percent - last_percent_shown >= 5 || percent == 100) { // update every 5%
+                        char prog[24];
+                        snprintf(prog, sizeof(prog), "Saving %u%%...", percent);
+                        lv_label_set_text(ui_response_label, prog);
+                        lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
+                        last_percent_shown = percent;
+                    }
+                    if(capture_write_offset >= capture_size) {
+                        capture_file.close();
+                        uint32_t total_ms = millis() - capture_start_ms;
+                        Serial.printf("[CAPTURE] Complete size=%u time=%ums freeHeap=%u\n", (unsigned)capture_size, (unsigned)total_ms, (unsigned)ESP.getFreeHeap());
+                        lv_label_set_text(ui_response_label, "Photo Saved!");
+                        lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
+                        free(capture_buffer);
+                        capture_buffer = nullptr;
+                        capture_size = 0;
+                        capture_write_pending = false;
+                    }
+                } else {
+                    Serial.printf("[CAPTURE] Write error at offset %u (wanted %u got %u)\n", (unsigned)capture_write_offset, (unsigned)to_write, (unsigned)written);
+                    capture_file.close();
+                    lv_label_set_text(ui_response_label, "Write Error");
+                    lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
+                    free(capture_buffer);
+                    capture_buffer = nullptr;
+                    capture_size = 0;
+                    capture_write_pending = false;
+                }
+            }
+        }
+
+    delay(1);
 }

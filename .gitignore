@@ -1,2 +1,4 @@
 backup/
 test/
+pi_chunk_sender.py
+.vscode/
