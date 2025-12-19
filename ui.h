@@ -17,12 +17,8 @@
 // -----------------------------------------------------------------
 // 2. HARİCİ DEĞİŞKEN VE FONKSİYON REFERANSLARI 
 // -----------------------------------------------------------------
-extern uint8_t frame_buffer[]; // RAW Buffer adı geri döndü
 extern bool capture_requested;
-
-// External variable and function references
-extern uint8_t frame_buffer[]; // RAW Buffer adı geri döndü
-extern bool capture_requested;
+extern bool capture_immediate;  // New: immediate capture flag
 
 extern void slider_event_cb(lv_event_t * e);
 extern void set_brightness(int value); 
@@ -62,12 +58,10 @@ lv_obj_t * ui_camera_view;
 lv_img_dsc_t my_img_dsc; 
 
 // Diagnostics labels (Menu ekranında gösterilecek)
-static lv_obj_t *lbl_conn_status = nullptr;
 static lv_obj_t *lbl_camera_status = nullptr;
 static lv_obj_t *lbl_fps = nullptr;
 static lv_obj_t *lbl_heap = nullptr;
 static lv_obj_t *lbl_frame_stats = nullptr;
-static lv_obj_t *lbl_wifi_info = nullptr;
 static lv_obj_t *btn_refresh = nullptr;
 
 // Settings screen controls
@@ -83,9 +77,37 @@ static lv_obj_t *lbl_settings = nullptr;
 
 // Menu screen title labels
 static lv_obj_t *lbl_menu_title = nullptr;
-static lv_obj_t *lbl_conn_title = nullptr;
 static lv_obj_t *lbl_cam_title = nullptr;
 static lv_obj_t *lbl_perf_title = nullptr;
+
+// Gallery UI elements
+static lv_obj_t *gallery_card = nullptr;
+static lv_obj_t *lbl_gallery_title = nullptr;
+static lv_obj_t *lbl_gallery_count = nullptr;
+static lv_obj_t *gallery_thumb_container = nullptr;
+static lv_obj_t *gallery_thumb_imgs[8] = {nullptr};
+static lv_obj_t *btn_gallery_prev = nullptr;
+static lv_obj_t *btn_gallery_next = nullptr;
+static lv_obj_t *btn_gallery_refresh = nullptr;
+static int16_t gallery_selected_index = -1;
+static lv_obj_t *delete_msgbox = nullptr;
+
+// Capture durum mesajı için kısa gecikmeli timer
+static lv_timer_t *capture_status_timer = nullptr;
+
+// Provided by main.ino (framed protocol)
+extern void send_capture_request();
+extern void send_focus_request();
+extern void send_gallery_request();
+extern void send_thumb_request(uint16_t index);
+extern void send_delete_request(uint16_t index);
+
+// Gallery data from main.ino
+extern uint16_t gallery_image_count;
+extern uint16_t gallery_total_size_mb;
+extern uint8_t gallery_current_page;
+extern bool gallery_thumb_valid[];
+extern lv_img_dsc_t gallery_thumb_dsc[];
 
 // Settings screen labels
 static lv_obj_t *lbl_settings_title = nullptr;
@@ -148,6 +170,23 @@ void create_styles() {
 }
 
 // -----------------------------------------------------------------
+// CAPTURE DURUM TIMER CALLBACK (legacy; no longer used for completion)
+// -----------------------------------------------------------------
+static void capture_status_timer_cb(lv_timer_t * t)
+{
+    LV_UNUSED(t);
+    // 4K foto çekimi Pi tarafında büyük ihtimalle tamamlandı
+    if(ui_response_label) {
+        lv_label_set_text(ui_response_label, "4K FOTO CEKILDI (Raspberry Pi)");
+        lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0); // Yesil
+    }
+    if(capture_status_timer) {
+        lv_timer_del(capture_status_timer);
+        capture_status_timer = nullptr;
+    }
+}
+
+// -----------------------------------------------------------------
 // EVENT HANDLER'LAR
 // -----------------------------------------------------------------
 static void back_to_main_event_handler(lv_event_t * e)
@@ -172,11 +211,22 @@ static void general_event_handler(lv_event_t * e)
         else if (strcmp(btn_name, "Menu") == 0) {
             Serial.println("[UI] Gecis -> Menu");
             lv_scr_load_anim(ui_Screen_Menu, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            // Auto-request gallery info when entering menu
+            send_gallery_request();
         }
         else if (strcmp(btn_name, "Capture") == 0) {
-            lv_label_set_text(ui_response_label, "FOTO CEKILIYOR...");
+            // Sadece Raspberry Pi'ya 4K capture komutu gönder, ESP32 tarafında
+            // JPEG kopyalama / dosya yazma YAPMA (ekran glitch'ini engellemek için)
+            lv_label_set_text(ui_response_label, "4K FOTO CEKILIYOR...");
             lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0); // Turuncu-sarı
-            capture_requested = true; 
+
+            // Timer ile tahmin etmiyoruz; Pi ACK gönderince main.ino UI'yı güncelleyecek.
+            if(capture_status_timer) {
+                lv_timer_del(capture_status_timer);
+                capture_status_timer = nullptr;
+            }
+
+            send_capture_request();
         }
         else if (strcmp(btn_name, "Metrics") == 0) {
             lv_label_set_text(ui_response_label, "Metrikler Yukleniyor...");
@@ -185,6 +235,7 @@ static void general_event_handler(lv_event_t * e)
         else if (strcmp(btn_name, "Focus") == 0) {
             lv_label_set_text(ui_response_label, "Odaklaniliyor...");
             lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x00B0FF), 0); // Mavi
+            send_focus_request();
         }
     }
 }
@@ -221,10 +272,8 @@ void update_text_sizes() {
     
     // Apply to menu screen
     if(lbl_menu_title) lv_obj_set_style_text_font(lbl_menu_title, current_font_large, 0);
-    if(lbl_conn_title) lv_obj_set_style_text_font(lbl_conn_title, current_font_medium, 0);
     if(lbl_cam_title) lv_obj_set_style_text_font(lbl_cam_title, current_font_medium, 0);
     if(lbl_perf_title) lv_obj_set_style_text_font(lbl_perf_title, current_font_medium, 0);
-    if(lbl_conn_status) lv_obj_set_style_text_font(lbl_conn_status, current_font_small, 0);
     if(lbl_camera_status) lv_obj_set_style_text_font(lbl_camera_status, current_font_small, 0);
     if(lbl_fps) lv_obj_set_style_text_font(lbl_fps, current_font_small, 0);
     if(lbl_heap) lv_obj_set_style_text_font(lbl_heap, current_font_small, 0);
@@ -263,6 +312,152 @@ void apply_theme() {
         lv_style_set_bg_color(&style_card_bg, lv_color_hex(0xFFFFFF));
         Serial.println("[UI] Light theme applied");
     }
+}
+
+// -----------------------------------------------------------------
+// GALLERY UI CALLBACK FUNCTIONS (called from main.ino)
+// -----------------------------------------------------------------
+void update_gallery_info_ui(uint16_t count, uint16_t size_mb) {
+    if(lbl_gallery_count) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%d goruntu / %d MB", count, size_mb);
+        lv_label_set_text(lbl_gallery_count, buf);
+    }
+    
+    // Clear and hide current thumbnails first (to avoid "NO DATA")
+    for(int i = 0; i < 4; i++) {
+        if(gallery_thumb_imgs[i]) {
+            lv_img_set_src(gallery_thumb_imgs[i], NULL);
+            lv_obj_add_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(gallery_thumb_imgs[i], lv_color_hex(0x333333), 0);
+        }
+    }
+    
+    // Request thumbnails for current page (indices are global, not slot-based)
+    uint16_t start_idx = gallery_current_page * 4;
+    for(int i = 0; i < 4 && (start_idx + i) < count; i++) {
+        send_thumb_request(start_idx + i);
+    }
+    
+    // Show placeholders for available slots (will be unhidden when thumb loads)
+    for(int i = 0; i < 4; i++) {
+        if(gallery_thumb_imgs[i] && (start_idx + i) < count) {
+            lv_obj_clear_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void update_gallery_thumb_ui(uint8_t visible_pos) {
+    // visible_pos is 0-3 (position on screen)
+    // Corresponding slot in buffer is (gallery_current_page * 4 + visible_pos) % 8
+    uint8_t slot = (gallery_current_page * 4 + visible_pos) % 8;
+    
+    if(visible_pos < 4 && gallery_thumb_imgs[visible_pos] && gallery_thumb_valid[slot]) {
+        lv_img_set_src(gallery_thumb_imgs[visible_pos], &gallery_thumb_dsc[slot]);
+        lv_obj_clear_flag(gallery_thumb_imgs[visible_pos], LV_OBJ_FLAG_HIDDEN);
+        Serial.printf("[UI] Updated visible pos %d from slot %d\n", visible_pos, slot);
+    }
+}
+
+void on_delete_result(uint8_t status) {
+    if(delete_msgbox) {
+        lv_msgbox_close(delete_msgbox);
+        delete_msgbox = nullptr;
+    }
+    
+    if(ui_response_label) {
+        if(status == 0) {
+            lv_label_set_text(ui_response_label, "Goruntu silindi");
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
+            
+            // Clear all thumbnails - gallery_request will reload them
+            for(int i = 0; i < 4; i++) {
+                if(gallery_thumb_imgs[i]) {
+                    lv_img_set_src(gallery_thumb_imgs[i], NULL);
+                    lv_obj_add_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);  // Hide to avoid "NO DATA"
+                    lv_obj_set_style_bg_color(gallery_thumb_imgs[i], lv_color_hex(0x333333), 0);
+                    lv_obj_set_style_border_width(gallery_thumb_imgs[i], 1, 0);
+                    lv_obj_set_style_border_color(gallery_thumb_imgs[i], lv_color_hex(0x444444), 0);
+                }
+            }
+            // Invalidate thumb cache
+            for(int i = 0; i < 8; i++) {
+                gallery_thumb_valid[i] = false;
+            }
+        } else {
+            lv_label_set_text(ui_response_label, "Silme basarisiz!");
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
+        }
+    }
+    
+    gallery_selected_index = -1;
+}
+
+static void gallery_thumb_click_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_CLICKED) {
+        int slot = (int)(intptr_t)lv_event_get_user_data(e);
+        uint16_t actual_index = gallery_current_page * 4 + slot;
+        
+        if(actual_index < gallery_image_count) {
+            gallery_selected_index = actual_index;
+            Serial.printf("[UI] Selected image #%d\n", actual_index);
+            
+            // Highlight selected thumbnail
+            for(int i = 0; i < 4; i++) {
+                if(gallery_thumb_imgs[i]) {
+                    if(i == slot) {
+                        lv_obj_set_style_border_width(gallery_thumb_imgs[i], 3, 0);
+                        lv_obj_set_style_border_color(gallery_thumb_imgs[i], lv_color_hex(0x2196F3), 0);
+                    } else {
+                        lv_obj_set_style_border_width(gallery_thumb_imgs[i], 1, 0);
+                        lv_obj_set_style_border_color(gallery_thumb_imgs[i], lv_color_hex(0x444444), 0);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void gallery_delete_msgbox_cb(lv_event_t * e) {
+    lv_obj_t * obj = lv_event_get_current_target(e);
+    const char * btn_text = lv_msgbox_get_active_btn_text(obj);
+    
+    if(btn_text && strcmp(btn_text, "SIL") == 0) {
+        if(gallery_selected_index >= 0) {
+            Serial.printf("[UI] Confirming delete of image #%d\n", gallery_selected_index);
+            send_delete_request((uint16_t)gallery_selected_index);
+        }
+    } else {
+        // Cancel
+        gallery_selected_index = -1;
+    }
+    
+    lv_msgbox_close(obj);
+    delete_msgbox = nullptr;
+}
+
+static void show_delete_confirm_dialog() {
+    if(gallery_selected_index < 0) {
+        if(ui_response_label) {
+            lv_label_set_text(ui_response_label, "Once goruntu secin");
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
+        }
+        return;
+    }
+    
+    static const char * btns[] = {"SIL", "IPTAL", ""};
+    
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Goruntu #%d silinsin mi?", gallery_selected_index);
+    
+    delete_msgbox = lv_msgbox_create(NULL, "ONAY", msg, btns, false);
+    lv_obj_add_event_cb(delete_msgbox, gallery_delete_msgbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_center(delete_msgbox);
+    
+    // Style the delete button red
+    lv_obj_t * btn_matrix = lv_msgbox_get_btns(delete_msgbox);
+    lv_btnmatrix_set_btn_ctrl(btn_matrix, 0, LV_BTNMATRIX_CTRL_CHECKED);
 }
 
 // -----------------------------------------------------------------
@@ -418,13 +613,14 @@ void ui_Screen_Menu_init(void)
     lv_obj_set_style_bg_color(ui_Screen_Menu, lv_color_hex(0x111111), 0);
     lv_obj_clear_flag(ui_Screen_Menu, LV_OBJ_FLAG_SCROLLABLE); 
 
-    // --- MENÜ İÇERİĞİ KARTI ---
+    // --- MENÜ İÇERİĞİ KARTI (scrollable for more content) ---
     lv_obj_t* menu_card = lv_obj_create(ui_Screen_Menu);
     lv_obj_add_style(menu_card, &style_card_bg, 0);
-    lv_obj_set_size(menu_card, 650, 420);
-    lv_obj_center(menu_card);
-    lv_obj_clear_flag(menu_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_pad_all(menu_card, 20, 0);
+    lv_obj_set_size(menu_card, 750, 460);
+    lv_obj_align(menu_card, LV_ALIGN_CENTER, 0, 5);
+    lv_obj_add_flag(menu_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(menu_card, 15, 0);
+    lv_obj_set_scrollbar_mode(menu_card, LV_SCROLLBAR_MODE_AUTO);
 
     // Başlık
     lbl_menu_title = lv_label_create(menu_card);
@@ -433,31 +629,178 @@ void ui_Screen_Menu_init(void)
     lv_obj_set_style_text_font(lbl_menu_title, current_font_large, 0);
     lv_obj_align(lbl_menu_title, LV_ALIGN_TOP_MID, 0, 0);
 
-    // Bağlantı Durumu - Kart
-    lv_obj_t* conn_card = lv_obj_create(menu_card);
-    lv_obj_set_size(conn_card, 600, 60);
-    lv_obj_align(conn_card, LV_ALIGN_TOP_MID, 0, 40);
-    lv_obj_set_style_bg_color(conn_card, lv_color_hex(0x252525), 0);
-    lv_obj_set_style_border_width(conn_card, 0, 0);
-    lv_obj_set_style_radius(conn_card, 8, 0);
-    lv_obj_clear_flag(conn_card, LV_OBJ_FLAG_SCROLLABLE);
+    // === GALERI KARTI ===
+    gallery_card = lv_obj_create(menu_card);
+    lv_obj_set_size(gallery_card, 710, 150);
+    lv_obj_align(gallery_card, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_bg_color(gallery_card, lv_color_hex(0x252525), 0);
+    lv_obj_set_style_border_width(gallery_card, 0, 0);
+    lv_obj_set_style_radius(gallery_card, 8, 0);
+    lv_obj_clear_flag(gallery_card, LV_OBJ_FLAG_SCROLLABLE);
 
-    lbl_conn_title = lv_label_create(conn_card);
-    lv_label_set_text(lbl_conn_title, "BAGLANTI DURUMU");
-    lv_obj_set_style_text_color(lbl_conn_title, lv_color_hex(0xFFB300), 0);
-    lv_obj_set_style_text_font(lbl_conn_title, current_font_medium, 0);
-    lv_obj_align(lbl_conn_title, LV_ALIGN_TOP_LEFT, 10, -9);
+    lbl_gallery_title = lv_label_create(gallery_card);
+    lv_label_set_text(lbl_gallery_title, "GORUNTU GALERISI");
+    lv_obj_set_style_text_color(lbl_gallery_title, lv_color_hex(0x9C27B0), 0);
+    lv_obj_set_style_text_font(lbl_gallery_title, current_font_medium, 0);
+    lv_obj_align(lbl_gallery_title, LV_ALIGN_TOP_LEFT, 10, -5);
 
-    lbl_conn_status = lv_label_create(conn_card);
-    lv_label_set_text(lbl_conn_status, "DURUM: ...");
-    lv_obj_set_width(lbl_conn_status, 580);
-    lv_obj_set_style_text_color(lbl_conn_status, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(lbl_conn_status, LV_ALIGN_TOP_LEFT, 10, 12);
+    lbl_gallery_count = lv_label_create(gallery_card);
+    lv_label_set_text(lbl_gallery_count, "Yukleniyor...");
+    lv_obj_set_style_text_color(lbl_gallery_count, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_font(lbl_gallery_count, current_font_small, 0);
+    lv_obj_align(lbl_gallery_count, LV_ALIGN_TOP_RIGHT, -10, -2);
 
-    // Kamera Durumu - Kart
+    // Thumbnail container (4 thumbnails per page: 80x60 each)
+    gallery_thumb_container = lv_obj_create(gallery_card);
+    lv_obj_set_size(gallery_thumb_container, 400, 75);
+    lv_obj_align(gallery_thumb_container, LV_ALIGN_LEFT_MID, 5, 10);
+    lv_obj_set_style_bg_opa(gallery_thumb_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(gallery_thumb_container, 0, 0);
+    lv_obj_clear_flag(gallery_thumb_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(gallery_thumb_container, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(gallery_thumb_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(gallery_thumb_container, 10, 0);
+
+    // Create 4 thumbnail image slots
+    for(int i = 0; i < 4; i++) {
+        gallery_thumb_imgs[i] = lv_img_create(gallery_thumb_container);
+        lv_obj_set_size(gallery_thumb_imgs[i], 80, 60);
+        lv_obj_set_style_bg_color(gallery_thumb_imgs[i], lv_color_hex(0x333333), 0);
+        lv_obj_set_style_bg_opa(gallery_thumb_imgs[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(gallery_thumb_imgs[i], 1, 0);
+        lv_obj_set_style_border_color(gallery_thumb_imgs[i], lv_color_hex(0x444444), 0);
+        lv_obj_set_style_radius(gallery_thumb_imgs[i], 4, 0);
+        lv_obj_add_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(gallery_thumb_imgs[i], gallery_thumb_click_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    }
+
+    // Gallery control buttons (right side)
+    lv_obj_t* gallery_btn_container = lv_obj_create(gallery_card);
+    lv_obj_set_size(gallery_btn_container, 280, 75);
+    lv_obj_align(gallery_btn_container, LV_ALIGN_RIGHT_MID, -5, 10);
+    lv_obj_set_style_bg_opa(gallery_btn_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(gallery_btn_container, 0, 0);
+    lv_obj_clear_flag(gallery_btn_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(gallery_btn_container, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(gallery_btn_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Previous page button
+    btn_gallery_prev = lv_btn_create(gallery_btn_container);
+    lv_obj_set_size(btn_gallery_prev, 50, 40);
+    lv_obj_set_style_bg_color(btn_gallery_prev, lv_color_hex(0x2D2D2D), 0);
+    lv_obj_set_style_radius(btn_gallery_prev, 6, 0);
+    lv_obj_add_event_cb(btn_gallery_prev, [](lv_event_t * e){
+        if(lv_event_get_code(e) == LV_EVENT_CLICKED && gallery_current_page > 0) {
+            gallery_current_page--;
+            // Clear and hide current thumbs (avoid NO DATA)
+            for(int i = 0; i < 4; i++) {
+                gallery_thumb_valid[i] = false;
+                if(gallery_thumb_imgs[i]) {
+                    lv_img_set_src(gallery_thumb_imgs[i], NULL);
+                    lv_obj_add_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_set_style_bg_color(gallery_thumb_imgs[i], lv_color_hex(0x333333), 0);
+                    lv_obj_set_style_border_width(gallery_thumb_imgs[i], 1, 0);
+                    lv_obj_set_style_border_color(gallery_thumb_imgs[i], lv_color_hex(0x444444), 0);
+                }
+            }
+            gallery_selected_index = -1;
+            // Request new thumbnails
+            uint8_t start_idx = gallery_current_page * 4;
+            for(int i = 0; i < 4 && (start_idx + i) < gallery_image_count; i++) {
+                if(gallery_thumb_imgs[i]) lv_obj_clear_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+                send_thumb_request(start_idx + i);
+            }
+            Serial.printf("[UI] Gallery page: %d\n", gallery_current_page);
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl_prev = lv_label_create(btn_gallery_prev);
+    lv_label_set_text(lbl_prev, "<");
+    lv_obj_center(lbl_prev);
+
+    // Refresh gallery button
+    btn_gallery_refresh = lv_btn_create(gallery_btn_container);
+    lv_obj_set_size(btn_gallery_refresh, 70, 40);
+    lv_obj_set_style_bg_color(btn_gallery_refresh, lv_color_hex(0x2196F3), 0);
+    lv_obj_set_style_radius(btn_gallery_refresh, 6, 0);
+    lv_obj_add_event_cb(btn_gallery_refresh, [](lv_event_t * e){
+        if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
+            gallery_current_page = 0;
+            gallery_selected_index = -1;
+            // Clear and hide thumbnails (avoid NO DATA)
+            for(int i = 0; i < 4; i++) {
+                gallery_thumb_valid[i] = false;
+                if(gallery_thumb_imgs[i]) {
+                    lv_img_set_src(gallery_thumb_imgs[i], NULL);
+                    lv_obj_add_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_set_style_bg_color(gallery_thumb_imgs[i], lv_color_hex(0x333333), 0);
+                }
+            }
+            // Invalidate all cache slots
+            for(int i = 0; i < 8; i++) {
+                gallery_thumb_valid[i] = false;
+            }
+            send_gallery_request();
+            Serial.println("[UI] Gallery refresh requested");
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl_ref = lv_label_create(btn_gallery_refresh);
+    lv_label_set_text(lbl_ref, LV_SYMBOL_REFRESH);
+    lv_obj_center(lbl_ref);
+
+    // Next page button
+    btn_gallery_next = lv_btn_create(gallery_btn_container);
+    lv_obj_set_size(btn_gallery_next, 50, 40);
+    lv_obj_set_style_bg_color(btn_gallery_next, lv_color_hex(0x2D2D2D), 0);
+    lv_obj_set_style_radius(btn_gallery_next, 6, 0);
+    lv_obj_add_event_cb(btn_gallery_next, [](lv_event_t * e){
+        if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
+            uint8_t max_pages = (gallery_image_count + 3) / 4;
+            if(gallery_current_page < max_pages - 1) {
+                gallery_current_page++;
+                // Clear and hide current thumbs (avoid NO DATA)
+                for(int i = 0; i < 4; i++) {
+                    gallery_thumb_valid[i] = false;
+                    if(gallery_thumb_imgs[i]) {
+                        lv_img_set_src(gallery_thumb_imgs[i], NULL);
+                        lv_obj_add_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+                        lv_obj_set_style_bg_color(gallery_thumb_imgs[i], lv_color_hex(0x333333), 0);
+                        lv_obj_set_style_border_width(gallery_thumb_imgs[i], 1, 0);
+                        lv_obj_set_style_border_color(gallery_thumb_imgs[i], lv_color_hex(0x444444), 0);
+                    }
+                }
+                gallery_selected_index = -1;
+                // Request new thumbnails
+                uint8_t start_idx = gallery_current_page * 4;
+                for(int i = 0; i < 4 && (start_idx + i) < gallery_image_count; i++) {
+                    if(gallery_thumb_imgs[i]) lv_obj_clear_flag(gallery_thumb_imgs[i], LV_OBJ_FLAG_HIDDEN);
+                    send_thumb_request(start_idx + i);
+                }
+                Serial.printf("[UI] Gallery page: %d\n", gallery_current_page);
+            }
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl_next = lv_label_create(btn_gallery_next);
+    lv_label_set_text(lbl_next, ">");
+    lv_obj_center(lbl_next);
+
+    // Delete button
+    lv_obj_t* btn_gallery_delete = lv_btn_create(gallery_btn_container);
+    lv_obj_set_size(btn_gallery_delete, 50, 40);
+    lv_obj_set_style_bg_color(btn_gallery_delete, lv_color_hex(0xF44336), 0);
+    lv_obj_set_style_radius(btn_gallery_delete, 6, 0);
+    lv_obj_add_event_cb(btn_gallery_delete, [](lv_event_t * e){
+        if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
+            show_delete_confirm_dialog();
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl_del = lv_label_create(btn_gallery_delete);
+    lv_label_set_text(lbl_del, LV_SYMBOL_TRASH);
+    lv_obj_center(lbl_del);
+
+    // === KAMERA DURUMU KARTI ===
     lv_obj_t* cam_card = lv_obj_create(menu_card);
-    lv_obj_set_size(cam_card, 600, 60);
-    lv_obj_align(cam_card, LV_ALIGN_TOP_MID, 0, 110);
+    lv_obj_set_size(cam_card, 710, 55);
+    lv_obj_align(cam_card, LV_ALIGN_TOP_MID, 0, 190);
     lv_obj_set_style_bg_color(cam_card, lv_color_hex(0x252525), 0);
     lv_obj_set_style_border_width(cam_card, 0, 0);
     lv_obj_set_style_radius(cam_card, 8, 0);
@@ -467,18 +810,18 @@ void ui_Screen_Menu_init(void)
     lv_label_set_text(lbl_cam_title, "KAMERA");
     lv_obj_set_style_text_color(lbl_cam_title, lv_color_hex(0xFD6D4E), 0);
     lv_obj_set_style_text_font(lbl_cam_title, current_font_medium, 0);
-    lv_obj_align(lbl_cam_title, LV_ALIGN_TOP_LEFT, 10, -9);
+    lv_obj_align(lbl_cam_title, LV_ALIGN_TOP_LEFT, 10, -5);
 
     lbl_camera_status = lv_label_create(cam_card);
     lv_label_set_text(lbl_camera_status, "DURUM: KONTROL EDILIYOR...");
     lv_obj_set_width(lbl_camera_status, 580);
     lv_obj_set_style_text_color(lbl_camera_status, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(lbl_camera_status, LV_ALIGN_TOP_LEFT, 10, 12);
+    lv_obj_align(lbl_camera_status, LV_ALIGN_TOP_LEFT, 10, 18);
 
-    // Performans - Kart
+    // === PERFORMANS KARTI ===
     lv_obj_t* perf_card = lv_obj_create(menu_card);
-    lv_obj_set_size(perf_card, 600, 100);
-    lv_obj_align(perf_card, LV_ALIGN_TOP_MID, 0, 180);
+    lv_obj_set_size(perf_card, 710, 100);
+    lv_obj_align(perf_card, LV_ALIGN_TOP_MID, 0, 255);
     lv_obj_set_style_bg_color(perf_card, lv_color_hex(0x252525), 0);
     lv_obj_set_style_border_width(perf_card, 0, 0);
     lv_obj_set_style_radius(perf_card, 8, 0);
@@ -488,49 +831,32 @@ void ui_Screen_Menu_init(void)
     lv_label_set_text(lbl_perf_title, "PERFORMANS");
     lv_obj_set_style_text_color(lbl_perf_title, lv_color_hex(0x4CAF50), 0);
     lv_obj_set_style_text_font(lbl_perf_title, current_font_medium, 0);
-    lv_obj_align(lbl_perf_title, LV_ALIGN_TOP_LEFT, 10, -9);
+    lv_obj_align(lbl_perf_title, LV_ALIGN_TOP_LEFT, 10, -5);
 
     lbl_fps = lv_label_create(perf_card);
     lv_label_set_text(lbl_fps, "FPS: 0");
     lv_obj_set_style_text_color(lbl_fps, lv_color_hex(0xE0E0E0), 0);
     lv_obj_set_style_text_font(lbl_fps, current_font_small, 0);
-    lv_obj_align(lbl_fps, LV_ALIGN_TOP_LEFT, 10, 14);
+    lv_obj_align(lbl_fps, LV_ALIGN_TOP_LEFT, 10, 18);
 
     lbl_heap = lv_label_create(perf_card);
     lv_label_set_text(lbl_heap, "Free Heap: ...");
     lv_obj_set_style_text_color(lbl_heap, lv_color_hex(0xE0E0E0), 0);
     lv_obj_set_style_text_font(lbl_heap, current_font_small, 0);
-    lv_obj_align(lbl_heap, LV_ALIGN_TOP_LEFT, 10, 34);
+    lv_obj_align(lbl_heap, LV_ALIGN_TOP_LEFT, 10, 38);
 
     lbl_frame_stats = lv_label_create(perf_card);
     lv_label_set_text(lbl_frame_stats, "Toplam Frame: 0");
     lv_obj_set_style_text_color(lbl_frame_stats, lv_color_hex(0xE0E0E0), 0);
     lv_obj_set_style_text_font(lbl_frame_stats, current_font_small, 0);
-    lv_obj_align(lbl_frame_stats, LV_ALIGN_TOP_LEFT, 10, 54);
-
-    // Refresh butonu
-    btn_refresh = lv_btn_create(menu_card);
-    lv_obj_set_size(btn_refresh, 140, 45);
-    lv_obj_align(btn_refresh, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(btn_refresh, lv_color_hex(0x2196F3), 0);
-    lv_obj_set_style_radius(btn_refresh, 8, 0);
-    lv_obj_add_event_cb(btn_refresh, [](lv_event_t * e){
-        lv_event_code_t code = lv_event_get_code(e);
-        if(code == LV_EVENT_CLICKED){
-            Serial.println("[UI] Manual refresh requested");
-        }
-    }, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* lbl_r = lv_label_create(btn_refresh);
-    lv_label_set_text(lbl_r, "YENILE");
-    lv_obj_set_style_text_color(lbl_r, lv_color_white(), 0);
-    lv_obj_center(lbl_r);
+    lv_obj_align(lbl_frame_stats, LV_ALIGN_TOP_LEFT, 10, 58);
 
     // Back butonu (Sol üst köşe, küçük ok)
     lv_obj_t* btn_back = lv_btn_create(ui_Screen_Menu);
     lv_obj_clear_flag(btn_back, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(btn_back, 50, 50);
     lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 15, 15);
-    lv_obj_set_style_radius(btn_back, 25, 0); // Yuvarlak buton
+    lv_obj_set_style_radius(btn_back, 25, 0);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x2D2D2D), 0);
     lv_obj_add_event_cb(btn_back, back_to_main_event_handler, LV_EVENT_CLICKED, NULL);
     
@@ -544,24 +870,11 @@ void ui_Screen_Menu_init(void)
         (void)t;
         
         char buf[256];
-        
-        // WiFi Connection status (static, update once)
-        static bool wifi_updated = false;
-        if(!wifi_updated) {
-            if(WiFi.isConnected()) {
-                snprintf(buf, sizeof(buf), "WiFi: %s | IP: %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
-            } else {
-                IPAddress apip = WiFi.softAPIP();
-                snprintf(buf, sizeof(buf), "AP: %s | IP: %s", WiFi.softAPSSID().c_str(), apip.toString().c_str());
-            }
-            lv_label_set_text(lbl_conn_status, buf);
-            wifi_updated = true;
-        }
+        unsigned long now = millis();
 
         // Kamera durumu kontrolü
         static uint32_t last_camera_frames = 0;
         static unsigned long last_camera_check = 0;
-        unsigned long now = millis();
         
         if(now - last_camera_check >= 10000) {
             uint32_t current_frames = ui_total_frames_counter;
@@ -690,17 +1003,8 @@ void ui_Screen_Main_init(void)
     lv_obj_set_style_shadow_color(ui_img_panel, lv_color_hex(0x000000), 0);
     lv_obj_set_style_shadow_opa(ui_img_panel, LV_OPA_40, 0);
     
-    // LVGL struct'a değerleri ata (C++ Uyumlu Yöntem)
-    my_img_dsc.header.always_zero = 0;
-    my_img_dsc.header.w = IMG_W;
-    my_img_dsc.header.h = IMG_H;
-    my_img_dsc.data_size = IMG_W * IMG_H * 2;
-    my_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-    my_img_dsc.data = frame_buffer; // RAW Buffer adı
-
-    // Image Widget Oluştur ve göster
+    // Image Widget Oluştur - main.ino tarafından jpeg_img_dsc ile doldurulacak
     ui_camera_view = lv_img_create(ui_img_panel);
-    lv_img_set_src(ui_camera_view, &my_img_dsc);
     lv_obj_align(ui_camera_view, LV_ALIGN_CENTER, 0, 0); 
 
     lbl_res = lv_label_create(ui_img_panel);

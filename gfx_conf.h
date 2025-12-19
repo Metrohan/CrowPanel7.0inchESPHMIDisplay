@@ -28,6 +28,8 @@ public:
             cfg.panel_height = screenHeight;
             cfg.offset_x = 0;
             cfg.offset_y = 0;
+            // Ensure correct color order: true = RGB, false = BGR
+            cfg.rgb_order = true;
             _panel_instance.config(cfg);
         }
 
