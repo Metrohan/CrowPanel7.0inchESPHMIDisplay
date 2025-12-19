@@ -573,19 +573,18 @@ void setup() {
         while(1) delay(1000);
     }
     
-    // PSRAM'dan buffer ayır
+    // PSRAM'dan buffer ay\u0131r (capture_buffer art\u0131k gerekli de\u011fil - Pi kay\u0131t yap\u0131yor)
     decoded_rgb565_static = (uint8_t*)ps_malloc(DECODE_BUFFER_SIZE);
     jpeg_buffer = (uint8_t*)ps_malloc(MAX_JPEG_SIZE);
-    capture_buffer_static = (uint8_t*)ps_malloc(MAX_JPEG_SIZE);
     
-    if(!decoded_rgb565_static || !jpeg_buffer || !capture_buffer_static) {
+    if(!decoded_rgb565_static || !jpeg_buffer) {
         Serial.println("[ERROR] PSRAM Allocation Failed!");
         while(1) delay(1000);
     }
     
-    Serial.printf("[INFO] Buffers in PSRAM - %dx%d mode (JPEG:%dKB, RGB:%dKB, Capture:%dKB)\n", 
+    Serial.printf("[INFO] Buffers in PSRAM - %dx%d mode (JPEG:%dKB, RGB:%dKB)\n", 
                   DECODE_WIDTH, DECODE_HEIGHT, 
-                  MAX_JPEG_SIZE/1024, DECODE_BUFFER_SIZE/1024, MAX_JPEG_SIZE/1024);
+                  MAX_JPEG_SIZE/1024, DECODE_BUFFER_SIZE/1024);
 
     // SPIFFS
     if(!SPIFFS.begin(true)) {
@@ -644,7 +643,8 @@ void loop() {
     // Always consume serial to avoid RX buffer overflow; framed parser discards if busy.
     process_serial_stream();
 
-    // DEBUG: Comprehensive frame state logging
+    // DEBUG: Comprehensive frame state logging (only if DEBUG_VERBOSE)
+#if DEBUG_VERBOSE
     static unsigned long last_dbg_ms = 0;
     static uint32_t dbg_frame_ready_count = 0;
     
@@ -654,8 +654,8 @@ void loop() {
     
     if(millis() - last_dbg_ms > 1000) {
         last_dbg_ms = millis();
-        Serial.printf("[DBG] ready=%d proc=%d pending=%d jsize=%u seq=%lu ready_cnt=%lu\n",
-                      frame_ready, processing_frame, capture_write_pending, 
+        Serial.printf("[DBG] ready=%d proc=%d jsize=%u seq=%lu ready_cnt=%lu\n",
+                      frame_ready, processing_frame,
                       (unsigned)jpeg_size, (unsigned long)last_preview_seq_rx,
                       (unsigned long)dbg_frame_ready_count);
         
@@ -667,12 +667,14 @@ void loop() {
         }
         dbg_frame_ready_count = 0;
     }
+#endif
 
-    // Frame decode ve göster
-    if(frame_ready && !processing_frame && !capture_write_pending) {
+    // Frame decode ve g\u00f6ster
+    if(frame_ready && !processing_frame) {
         processing_frame = true;
         frame_ready = false;
         
+#if DEBUG_VERBOSE
         // Log that we're attempting decode
         Serial.printf("[DECODE] Attempting: size=%u first4=[%02X %02X %02X %02X]\n",
                       (unsigned)jpeg_size,
@@ -680,6 +682,7 @@ void loop() {
                       jpeg_size > 1 ? jpeg_buffer[1] : 0,
                       jpeg_size > 2 ? jpeg_buffer[2] : 0,
                       jpeg_size > 3 ? jpeg_buffer[3] : 0);
+#endif
         
         uint16_t w = 0, h = 0;
         JRESULT jr = TJpgDec.getJpgSize(&w, &h, jpeg_buffer, jpeg_size);
@@ -758,54 +761,15 @@ void loop() {
         processing_frame = false;
     }
 
-    // Incremental writer
-    if(capture_write_pending) {
-        size_t remaining = capture_size - capture_write_offset;
-        size_t to_write = remaining > CAPTURE_CHUNK_SIZE ? CAPTURE_CHUNK_SIZE : remaining;
-        if(to_write > 0) {
-            size_t written = capture_file.write(capture_buffer_static + capture_write_offset, to_write);
-            if(written == to_write) {
-                capture_write_offset += written;
-                uint8_t percent = (uint8_t)((capture_write_offset * 100UL) / capture_size);
-                static uint8_t last_percent_shown = 0;
-                if(percent - last_percent_shown >= 10 || percent == 100) {  // Update every 10%
-                    char prog[24];
-                    snprintf(prog, sizeof(prog), "Saving %u%%...", percent);
-                    lv_label_set_text(ui_response_label, prog);
-                    lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
-                    last_percent_shown = percent;
-                }
-                if(capture_write_offset >= capture_size) {
-                    capture_file.close();
-                    lv_label_set_text(ui_response_label, "Photo Saved!");
-                    lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
-                    capture_size = 0;
-                    capture_write_pending = false;
-                }
-            } else {
-                capture_file.close();
-                Serial.printf("[ERROR] Write failed: %zu bytes expected, got %zu\n", to_write, written);
-                lv_label_set_text(ui_response_label, "Write Error");
-                lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
-                capture_size = 0;
-                capture_write_pending = false;
-            }
-        } else {
-            // Unexpected: to_write is 0 but still pending
-            capture_file.close();
-            Serial.println("[ERROR] Capture write finished with 0 bytes to write");
-            capture_write_pending = false;
-        }
-    }
-
     // Periodic stats (lightweight, every 2s)
     unsigned long now = millis();
     if(now - stat_last_log_ms > 2000) {
         stat_last_log_ms = now;
-        Serial.printf("[STAT] rx=%lu shown=%lu drop_busy=%lu\n",
+        Serial.printf("[STAT] rx=%lu shown=%lu drop_busy=%lu heap=%luKB\n",
                       (unsigned long)stat_frames_rx,
                       (unsigned long)stat_frames_shown,
-                      (unsigned long)stat_frames_dropped_busy);
+                      (unsigned long)stat_frames_dropped_busy,
+                      (unsigned long)(ESP.getFreeHeap() / 1024));
     }
 
     delay(1);

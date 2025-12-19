@@ -16,14 +16,10 @@ Types:
 import serial
 import serial.tools.list_ports
 import time
-import io
 import os
 from datetime import datetime
-from PIL import Image
 import cv2
 import numpy as np
-
-# Picamera2 kütüphanesi
 from picamera2 import Picamera2
 
 
@@ -190,6 +186,17 @@ def delete_image(index: int, files: list) -> bool:
 
 # Cached gallery file list (updated on gallery info request)
 gallery_files_cache = []
+
+# Pre-allocated BGR buffer for YUV conversion (avoids allocation per frame)
+_bgr_buffer = None
+
+
+def _ensure_bgr_buffer(height: int, width: int) -> np.ndarray:
+    """Pre-allocate or reuse BGR buffer."""
+    global _bgr_buffer
+    if _bgr_buffer is None or _bgr_buffer.shape != (height, width, 3):
+        _bgr_buffer = np.empty((height, width, 3), dtype=np.uint8)
+    return _bgr_buffer
 
 
 # --- KAMERA AYARLARI ---

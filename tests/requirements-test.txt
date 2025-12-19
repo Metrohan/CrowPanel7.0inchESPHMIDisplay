@@ -1,0 +1,10 @@
+# Test dependencies for CrowPanel test suite
+# Install with: pip3 install -r tests/requirements-test.txt
+
+pytest>=7.0.0
+pytest-timeout>=2.0.0
+numpy>=1.20.0
+opencv-python>=4.5.0
+
+# Optional: For coverage reports
+# pytest-cov>=3.0.0
