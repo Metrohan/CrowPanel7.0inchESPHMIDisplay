@@ -37,14 +37,11 @@
 ## 🚀 Kurulum
 
 ### 1. Gerekli Yazılımlar
-- **Arduino IDE** veya **PlatformIO**
+- **Arduino IDE**
 
-- **ESP32 Board eklentisi** (File > Preferences > Additional boards manager URLs: https://espressif.github.io/arduino-esp32/package_esp32_index.json ve soldaki Board Manager bölümünden `esp32 by Espressif Systems` indir)
+- **ESP32 Board eklentisi** sürüm 2.0.8 (File > Preferences > Additional boards manager URLs: https://espressif.github.io/arduino-esp32/package_esp32_index.json ve soldaki Board Manager bölümünden `esp32 by Espressif Systems` indir)
 
-- Aşağıdaki kütüphaneler (Arduino IDE kullanıyorsan):
-  - `LovyanGFX`
-  - `lvgl`
-  - `PCA9557`
+- libraries klasörünündeki kütüphaneleri indir ve Arduino klasörünün içerisindeki libraries klasörüne at.
 
 ### 2. Kodun Yüklenmesi
 1. Proje dosyalarını indir:
@@ -52,7 +49,7 @@
    git clone https://github.com/Metrohan/CrowPanel7.0inchESPHMIDisplay.git
    ```
 
-2. **Arduino IDE** veya **PlatformIO** ile aç.
+2. **Arduino IDE**ile aç.
 
 3. Board kısmından **ESP32S3 Dev Module** seç.
 
