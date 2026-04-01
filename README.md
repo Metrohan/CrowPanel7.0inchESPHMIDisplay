@@ -1,66 +1,132 @@
-# CrowPanel 7.0" ESP32 HMI Display
+# CrowPanel 7.0" ESP32-S3 HMI Display Performance Template
 
-### Bu paket, **SADECE CrowPanel 7.0 inç ESP32 tabanlı HMI dokunmatik ekran** için hazırlanmış bir örnek uygulama paketidir ve **i-Lab** için hazırlanmıştır.  
-### Amaç, ESP32 tabanlı endüstriyel ekranlar ile **arayüz tasarımı**, **seri haberleşme**, ve **donanım kontrolü** süreçlerini kolaylaştırmaktır.
+[Türkçe](#türkçe) | [English](#english)
 
 ---
 
-## 🖼️ Donanım Görseli
+<a name="türkçe"></a>
+## 🇹🇷 Türkçe
+
+Bu proje, **CrowPanel 7.0 inç (ESP32-S3)** tabanlı endüstriyel ekranlar için optimize edilmiş, yüksek performanslı bir HMI (İnsan-Makine Arayüzü) şablonudur. Proje, özellikle düşük gecikmeli görüntü aktarımı ve modern bir kullanıcı arayüzü (LVGL 8.x) sunmak amacıyla tasarlanmıştır.
+
+---
+
+### 🖼️ Donanım Görseli
 ![CrowPanel 7.0 ESP32 HMI Display](./images/screen.jpg)
 
 ---
 
-## 📁 Proje Yapısı
+### 🚀 Öne Çıkan Özellikler
+
+- **Yüksek Performanslı Görüntü Aktarımı:** USB-Serial üzerinden **2 Mbps** hızında, JPEG kodlanmış karelerin (480x320) gerçek zamanlı akışı.
+- **Modern Arayüz:** LVGL 8.x kütüphanesi kullanılarak tasarlanmış, karanlık tema destekli kart (Card) yapısı.
+- **Düşük Gecikme:** PSRAM (OPI) üzerinden doğrudan dekoder ve DMA destekli ekran yenileme.
+- **Gelişmiş Donanım Kontrolü:** Odaklama (Autofocus), çekilen fotoğrafların galeriden izlenmesi ve sistem metrikleri takibi.
+- **Modüler Yapı:** Kolayca özelleştirilebilir `ui.h` ve `gfx_conf.h` dosyaları.
+
+---
+
+### 📁 Proje Yapısı
 
 | Klasör / Dosya | Açıklama |
 |----------------|----------|
-| `main.ino` | ekranın kontrol akışını içerir. |
-| `ui.h` | Ekran arayüzüyle ilgili görseller, fontlar ve UI kodları bulunur. |
-| `ui_events.h` | Ekran arayüzüyle ilgili olan eylemler bu dosyada bulunur.|
-| `gfx_conf.h` | Ekranın pinleri ve kalibrasyonun olduğu dosyadır. |
-| `libraries/` | Harici kütüphaneler (örneğin, dokunmatik sürücüler, sensörler veya haberleşme modülleri) burada tutulur. (içindekileri Arduino'nun libraries klasörüne at.)|
-| `README.md` | Proje hakkında genel bilgiler. |
-| `images/` | Tanıtım ve dokümantasyon için kullanılan görseller. |
+| `main.ino` | Ana kontrol akışı, seri haberleşme protokolü ve JPEG dekoder yönetimi. |
+| `ui.h` | LVGL arayüz bileşenleri, stil tanımlamaları ve ekranlar arası geçişler. |
+| `gfx_conf.h` | CrowPanel 7.0" (ST7701) için pin tanımlaları ve LovyanGFX konfigürasyonu. |
+| `libraries/` | Bağımlı kütüphaneler (LVGL, LovyanGFX, GT911 Touch). |
+| `ilablogo.c` | UI üzerinde yer alan kurumsal logo verisi (isteğe bağlı değiştirilebilir). |
 
 ---
 
-## ⚙️ Özellikler
+### ⚙️ Gereksinimler & Kurulum
 
-- 7.0" dokunmatik HMI ekran desteği (ESP32 tabanlı)
-- Seri haberleşme (UART) ile dış cihaz kontrolü
-- Düğme, metin, durum göstergesi ve slider gibi temel HMI bileşenleri
-- Hızlı başlangıç için sade ve modüler kod yapısı
-- OTA (Over-the-Air) güncelleme desteği (isteğe bağlı)
+#### 1. Arduino IDE Yapılandırması
+- **Board:** `ESP32S3 Dev Module`
+- **USB CDC On Boot:** `Enabled`
+- **Flash Mode:** `QIO 80MHz`
+- **Partition Scheme:** `Huge APP (3MB No OTA/1MB SPIFFS)`
+- **PSRAM:** `OPI PSRAM` (ÇOK ÖNEMLİ).
+
+#### 2. Kütüphane Kurulumu
+`libraries` klasörü içerisindeki kütüphaneleri Arduino kütüphane klasörünüze kopyalayın.
 
 ---
 
-## 🚀 Kurulum
+### 🤝 İş Birliği
+Bu proje, **i-Lab** ile hazırlanmıştır. Daha fazla bilgi ve iletişim için:
 
-### 1. Gerekli Yazılımlar
-- **Arduino IDE**
+🌐 **Web sitesi:** [pieilab.com](http://www.pieilab.com)  
+🔗 **LinkedIn:** [PIE i-Lab](https://www.linkedin.com/company/pielabb)
 
-- **ESP32 Board eklentisi** sürüm 2.0.8 (File > Preferences > Additional boards manager URLs: https://espressif.github.io/arduino-esp32/package_esp32_index.json ve soldaki Board Manager bölümünden `esp32 by Espressif Systems` indir)
+---
 
-- libraries klasörünündeki kütüphaneleri indir ve Arduino klasörünün içerisindeki libraries klasörüne at.
+### 👨‍💻 İletişim
+**Metehan Günen** - [metehangnn@outlook.com](mailto:metehangnn@outlook.com)
 
-### 2. Kodun Yüklenmesi
-1. Proje dosyalarını indir:
-   ```bash
-   git clone https://github.com/Metrohan/CrowPanel7.0inchESPHMIDisplay.git
-   ```
+---
 
-2. **Arduino IDE**ile aç.
+<br>
+<hr>
+<br>
 
-3. Board kısmından **ESP32S3 Dev Module** seç.
+<a name="english"></a>
+## 🇺🇸 English
 
-4. Arduino IDE üzerinden Tools > Partition Scheme > Huge APP (3MB No OTA/1MB SPIFFS) ayarını seç.
+This project is a high-performance HMI (Human-Machine Interface) template optimized for **CrowPanel 7.0 inch (ESP32-S3)** based industrial displays. It is designed to provide low-latency image streaming and a modern user interface (LVGL 8.x).
 
-5. Yine Arduino IDE üzerinden Tools > PSRAM > OPI PSRAM ayarını seç.
+---
 
-6. Kodu karta yükle, olmazsa IDE'yi kapatıp aç.
+### 🖼️ Hardware Visual
+![CrowPanel 7.0 ESP32 HMI Display](./images/screen.jpg)
 
-Not: Baud ayarını koddaki ile aynı yapmayı unutma ve dokunmatik için serial monitor'ü kontrol et. Eğer Dokunmatik algılandı dönütü almazsan **I2C Scanner** ile I2C adresini öğren ve gfx.conf.h dosyasındaki `cfg.i2c_addr   = 0x14;` satırını güncelle.
+---
 
-## İletişim
+### 🚀 Key Features
 
-### metehangnn@outlook.com
+- **High-Performance Image Streaming:** Real-time 480x320 JPEG streaming at **2 Mbps** via USB-Serial.
+- **Modern UI:** Card-based design with dark theme support using the LVGL 8.x library.
+- **Low Latency:** Direct decoding via PSRAM (OPI) and DMA-supported display refresh.
+- **Advanced Hardware Control:** Autofocus adjustment, gallery view for captured images, and real-time system metrics tracking.
+- **Modular Design:** Easily customizable `ui.h` and `gfx_conf.h` files.
+
+---
+
+### 📁 Project Structure
+
+| Folder / File | Description |
+|----------------|----------|
+| `main.ino` | Main control flow, serial communication protocol, and JPEG decoder management. |
+| `ui.h` | LVGL interface components, style definitions, and screen transitions. |
+| `gfx_conf.h` | Pin definitions and LovyanGFX configuration for CrowPanel 7.0" (ST7701). |
+| `libraries/` | Dependent libraries (LVGL, LovyanGFX, GT911 Touch). |
+| `ilablogo.c` | Corporate logo data used in the UI (optional and replaceable). |
+
+---
+
+### ⚙️ Requirements & Setup
+
+#### 1. Arduino IDE Configuration
+- **Board:** `ESP32S3 Dev Module`
+- **USB CDC On Boot:** `Enabled`
+- **Flash Mode:** `QIO 80MHz`
+- **Partition Scheme:** `Huge APP (3MB No OTA/1MB SPIFFS)`
+- **PSRAM:** `OPI PSRAM` (CRITICAL: Required for image processing).
+
+#### 2. Library Installation
+Copy the libraries inside the `libraries` folder to your Arduino libraries directory.
+
+---
+
+### 🤝 Collaboration
+This project was prepared with **i-Lab**. For more information and contact:
+
+🌐 **Website:** [pieilab.com](http://www.pieilab.com)  
+🔗 **LinkedIn:** [PIE i-Lab](https://www.linkedin.com/company/pielabb)
+
+---
+
+### 👨‍💻 Contact
+**Metehan Günen** - [metehangnn@outlook.com](mailto:metehangnn@outlook.com)
+
+---
+*This project was created to push the limits of the CrowPanel 7.0" display and provide developers with a ready-to-use HMI skeleton.*

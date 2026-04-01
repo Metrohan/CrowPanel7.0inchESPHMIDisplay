@@ -1,5 +1,5 @@
 backup/
 test/
 .vscode/
-pi_usb_sender.py
-pi_chunk_sender.py
+/pi_usb_sender.py
+/pi_chunk_sender.py
