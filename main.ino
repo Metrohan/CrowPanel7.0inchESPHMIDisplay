@@ -55,8 +55,23 @@ size_t decoded_height = 0;
 
 // ---------- LVGL / Display ----------
 LGFX tft;
+
+#define VSYNC_PIN GPIO_NUM_40
+static volatile bool vsync_flag = false;
+
+void IRAM_ATTR vsync_isr() {
+    vsync_flag = true;
+}
+
+static inline void wait_vsync() {
+    vsync_flag = false;
+    uint32_t t = millis();
+    while (!vsync_flag && (millis() - t) < 20);  // max 20ms wait (1 frame @50fps)
+}
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[screenWidth * 10];
+static lv_color_t* lvgl_buf1 = nullptr;
+static lv_color_t* lvgl_buf2 = nullptr;
+#define LVGL_BUF_LINES 40
 static lv_disp_drv_t disp_drv;
 static lv_indev_drv_t indev_drv;
 
@@ -154,7 +169,7 @@ static void on_capture_ack(uint32_t captured_seq) {
     last_capture_ack_seq = captured_seq;
     if(ui_response_label) {
         char msg[64];
-        snprintf(msg, sizeof(msg), "4K FOTO CEKILDI (seq=%lu)", (unsigned long)captured_seq);
+        snprintf(msg, sizeof(msg), T("4K FOTO CEKİLDİ (seq=%lu)", "4K PHOTO CAPTURED (seq=%lu)"), (unsigned long)captured_seq);
         lv_label_set_text(ui_response_label, msg);
         lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
     }
@@ -163,11 +178,11 @@ static void on_capture_ack(uint32_t captured_seq) {
 static void on_focus_ack(uint8_t status) {
     if(ui_response_label) {
         if(status == 0) {
-            lv_label_set_text(ui_response_label, "Odaklandi!");
-            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);  // Green
+            lv_label_set_text(ui_response_label, T("Odaklandi!", "Focused!"));
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
         } else {
-            lv_label_set_text(ui_response_label, "Odaklama Basarisiz");
-            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);  // Orange
+            lv_label_set_text(ui_response_label, T("Odaklama Basarisiz", "Focus Failed"));
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
         }
     }
 }
@@ -373,6 +388,11 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 
 // ---------- LVGL / Display Functions ----------
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
+    // Sync the last chunk of a frame to the vertical blanking period.
+    // Partial flushes within a frame proceed immediately to stay fast.
+    if (lv_disp_flush_is_last(disp)) {
+        wait_vsync();
+    }
     tft.pushImageDMA(area->x1, area->y1,
                      area->x2 - area->x1 + 1, area->y2 - area->y1 + 1,
                      (lgfx::rgb565_t *)color_p);
@@ -573,11 +593,12 @@ void setup() {
         while(1) delay(1000);
     }
     
-    // PSRAM'dan buffer ay\u0131r (capture_buffer art\u0131k gerekli de\u011fil - Pi kay\u0131t yap\u0131yor)
     decoded_rgb565_static = (uint8_t*)ps_malloc(DECODE_BUFFER_SIZE);
-    jpeg_buffer = (uint8_t*)ps_malloc(MAX_JPEG_SIZE);
-    
-    if(!decoded_rgb565_static || !jpeg_buffer) {
+    jpeg_buffer           = (uint8_t*)ps_malloc(MAX_JPEG_SIZE);
+    lvgl_buf1             = (lv_color_t*)ps_malloc(screenWidth * LVGL_BUF_LINES * sizeof(lv_color_t));
+    lvgl_buf2             = (lv_color_t*)ps_malloc(screenWidth * LVGL_BUF_LINES * sizeof(lv_color_t));
+
+    if(!decoded_rgb565_static || !jpeg_buffer || !lvgl_buf1 || !lvgl_buf2) {
         Serial.println("[ERROR] PSRAM Allocation Failed!");
         while(1) delay(1000);
     }
@@ -594,11 +615,17 @@ void setup() {
     tft.begin();
     tft.setRotation(0);
     tft.fillScreen(TFT_BLACK);
+
+    // VSYNC interrupt for tear-free flush synchronization
+    pinMode(VSYNC_PIN, INPUT);
+    attachInterrupt(VSYNC_PIN, vsync_isr, RISING);
+
     pinMode(BACKLIGHT_PIN, OUTPUT);
+    analogWriteFrequency(20000);  // 20kHz — eliminates PWM beat with display scan
     set_brightness(200);
 
     lv_init();
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
+    lv_disp_draw_buf_init(&draw_buf, lvgl_buf1, lvgl_buf2, screenWidth * LVGL_BUF_LINES);
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = screenWidth;
     disp_drv.ver_res = screenHeight;
@@ -638,10 +665,14 @@ void setup() {
 
 // ---------- Loop ----------
 void loop() {
-    lv_timer_handler();
-    
-    // Always consume serial to avoid RX buffer overflow; framed parser discards if busy.
-    process_serial_stream();
+    // Run LVGL tasks, returns ms until next timer fires
+    uint32_t next_ms = lv_timer_handler();
+
+    // Drain serial while LVGL has idle time, cap at next timer deadline
+    uint32_t deadline = millis() + min(next_ms, (uint32_t)5);
+    do {
+        process_serial_stream();
+    } while(millis() < deadline && Serial.available() > 0);
 
     // DEBUG: Comprehensive frame state logging (only if DEBUG_VERBOSE)
 #if DEBUG_VERBOSE
@@ -772,5 +803,4 @@ void loop() {
                       (unsigned long)(ESP.getFreeHeap() / 1024));
     }
 
-    delay(1);
 }

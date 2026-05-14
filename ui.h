@@ -15,7 +15,7 @@
 #define IMG_H 120
 
 // -----------------------------------------------------------------
-// 2. HARİCİ DEĞİŞKEN VE FONKSİYON REFERANSLARI 
+// 2. HARICI DEGISKEN VE FONKSIYON REFERANSLARI 
 // -----------------------------------------------------------------
 extern bool capture_requested;
 extern bool capture_immediate;  // New: immediate capture flag
@@ -27,8 +27,10 @@ extern void set_brightness(int value);
 extern uint32_t ui_total_frames_counter;
 
 // UI Ayarları
-static bool is_dark_theme = true; // Koyu tema aktif
-static int text_size_mode = 1; // 0=Küçük, 1=Orta, 2=Büyük
+static bool is_dark_theme = true;
+static int text_size_mode = 1;
+bool lang_tr = true;  // true = Türkçe, false = English
+#define T(a,b) (lang_tr ? (a) : (b))
 
 // Font size pointers
 static const lv_font_t* current_font_small = &lv_font_montserrat_12;
@@ -114,9 +116,13 @@ static lv_obj_t *lbl_settings_title = nullptr;
 static lv_obj_t *lbl_brightness = nullptr;
 static lv_obj_t *lbl_theme = nullptr;
 static lv_obj_t *lbl_text_size = nullptr;
+static lv_obj_t *lbl_light_theme = nullptr;
+static lv_obj_t *lbl_dark_theme = nullptr;
+static lv_obj_t *lbl_lang_section = nullptr;
+static lv_obj_t *lang_switch = nullptr;
 
 // -----------------------------------------------------------------
-// STİLLER (KARANLIK TEMA ve KART YAPISI)
+// STILLER (KARANLIK TEMA ve KART YAPISI)
 // -----------------------------------------------------------------
 static lv_style_t style_sidebar;
 static lv_style_t style_sidebar_accent; // Dekoratif açık gri sütun
@@ -140,7 +146,7 @@ void create_styles() {
     lv_style_set_pad_all(&style_sidebar, 0);
 
     lv_style_init(&style_sidebar_accent);
-    lv_style_set_bg_color(&style_sidebar_accent, lv_color_hex(0x3A3A3A)); // Açık gri
+    lv_style_set_bg_color(&style_sidebar_accent, lv_color_hex(0x3A3A3A)); // Acik gri
     lv_style_set_radius(&style_sidebar_accent, 0);
     lv_style_set_border_width(&style_sidebar_accent, 0);
     lv_style_set_pad_all(&style_sidebar_accent, 0);
@@ -151,10 +157,8 @@ void create_styles() {
     lv_style_set_bg_opa(&style_btn_sidebar, LV_OPA_COVER);
     lv_style_set_text_color(&style_btn_sidebar, lv_color_hex(0xE0E0E0));
     lv_style_set_border_width(&style_btn_sidebar, 0);
-    lv_style_set_radius(&style_btn_sidebar, 8); // Yuvarlatılmış köşeler
-    lv_style_set_shadow_width(&style_btn_sidebar, 5);
-    lv_style_set_shadow_color(&style_btn_sidebar, lv_color_hex(0x000000));
-    lv_style_set_shadow_opa(&style_btn_sidebar, LV_OPA_30); 
+    lv_style_set_radius(&style_btn_sidebar, 8);
+    lv_style_set_shadow_width(&style_btn_sidebar, 0);
 
     lv_style_init(&style_btn_orange);
     lv_style_set_bg_color(&style_btn_orange, lv_color_hex(0xFD6D4E));
@@ -194,7 +198,7 @@ static void back_to_main_event_handler(lv_event_t * e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_CLICKED) {
         Serial.println("[UI] Geri donuluyor -> Main Screen");
-        lv_scr_load_anim(ui_Screen_Main, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+        lv_scr_load_anim(ui_Screen_Main, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     }
 }
 
@@ -206,19 +210,19 @@ static void general_event_handler(lv_event_t * e)
     if (code == LV_EVENT_CLICKED) {
         if (strcmp(btn_name, "Ayarlar") == 0) {
             Serial.println("[UI] Gecis -> Ayarlar");
-            lv_scr_load_anim(ui_Screen_Settings, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            lv_scr_load_anim(ui_Screen_Settings, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
         }
         else if (strcmp(btn_name, "Menu") == 0) {
             Serial.println("[UI] Gecis -> Menu");
-            lv_scr_load_anim(ui_Screen_Menu, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            lv_scr_load_anim(ui_Screen_Menu, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
             // Auto-request gallery info when entering menu
             send_gallery_request();
         }
         else if (strcmp(btn_name, "Capture") == 0) {
             // Sadece Raspberry Pi'ya 4K capture komutu gönder, ESP32 tarafında
             // JPEG kopyalama / dosya yazma YAPMA (ekran glitch'ini engellemek için)
-            lv_label_set_text(ui_response_label, "4K FOTO CEKILIYOR...");
-            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0); // Turuncu-sarı
+            lv_label_set_text(ui_response_label, T("4K FOTO CEKILIYOR...", "CAPTURING 4K..."));
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
 
             // Timer ile tahmin etmiyoruz; Pi ACK gönderince main.ino UI'yı güncelleyecek.
             if(capture_status_timer) {
@@ -233,15 +237,15 @@ static void general_event_handler(lv_event_t * e)
             lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x00E676), 0); // Yeşil
         }
         else if (strcmp(btn_name, "Focus") == 0) {
-            lv_label_set_text(ui_response_label, "Odaklaniliyor...");
-            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x00B0FF), 0); // Mavi
+            lv_label_set_text(ui_response_label, T("Odaklaniyor...", "Focusing..."));
+            lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x00B0FF), 0);
             send_focus_request();
         }
     }
 }
 
 // -----------------------------------------------------------------
-// TEMA DEĞİŞTİRME FONKSİYONU
+// TEMA DEGISTIRME FONKSIYONU
 // -----------------------------------------------------------------
 void update_text_sizes() {
     // Update font pointers based on text_size_mode
@@ -301,7 +305,7 @@ void apply_theme() {
         lv_style_set_bg_color(&style_card_bg, lv_color_hex(0x1F1F1F));
         Serial.println("[UI] Dark theme applied");
     } else {
-        // Açık tema renkleri
+        // Acik tema renkleri
         lv_obj_set_style_bg_color(ui_Screen_Main, lv_color_hex(0xF5F5F5), 0);
         lv_obj_set_style_bg_color(ui_Screen_Settings, lv_color_hex(0xF5F5F5), 0);
         lv_obj_set_style_bg_color(ui_Screen_Menu, lv_color_hex(0xF5F5F5), 0);
@@ -315,12 +319,38 @@ void apply_theme() {
 }
 
 // -----------------------------------------------------------------
+// DIL / LANGUAGE
+// -----------------------------------------------------------------
+void apply_language() {
+    if(lbl_settings_title) lv_label_set_text(lbl_settings_title, T("AYARLAR",             "SETTINGS"));
+    if(lbl_brightness)     lv_label_set_text(lbl_brightness,     T("EKRAN PARLAKLIGI",    "SCREEN BRIGHTNESS"));
+    if(lbl_theme)          lv_label_set_text(lbl_theme,          T("TEMA",                "THEME"));
+    if(lbl_light_theme)    lv_label_set_text(lbl_light_theme,    T("Acik",                "Light"));
+    if(lbl_dark_theme)     lv_label_set_text(lbl_dark_theme,     T("Koyu",                "Dark"));
+    if(lbl_text_size)      lv_label_set_text(lbl_text_size,      T("YAZI BOYUTU",         "TEXT SIZE"));
+    if(lbl_lang_section)   lv_label_set_text(lbl_lang_section,   T("DIL",                 "LANGUAGE"));
+    if(lbl_menu)           lv_label_set_text(lbl_menu,           T("MENU",                "MENU"));
+    if(lbl_settings)       lv_label_set_text(lbl_settings,       T("AYAR",                "SETTINGS"));
+    if(lbl_focus)          lv_label_set_text(lbl_focus,          T("ODAK",                "FOCUS"));
+    if(lbl_capture)        lv_label_set_text(lbl_capture,        T("CEK",                 "CAPTURE"));
+    if(lbl_menu_title)     lv_label_set_text(lbl_menu_title,     T("SISTEM DIAGNOSTIK",   "SYSTEM DIAGNOSTICS"));
+    if(lbl_gallery_title)  lv_label_set_text(lbl_gallery_title,  T("GORUNTU GALERISI",    "IMAGE GALLERY"));
+    if(lbl_gallery_count)  lv_label_set_text(lbl_gallery_count,  T("Yukleniyor...",        "Loading..."));
+    if(lbl_cam_title)      lv_label_set_text(lbl_cam_title,      T("KAMERA",              "CAMERA"));
+    if(lbl_perf_title)     lv_label_set_text(lbl_perf_title,     T("PERFORMANS",          "PERFORMANCE"));
+    if(lbl_camera_status)  lv_label_set_text(lbl_camera_status,  T("DURUM: KONTROL EDILIYOR...", "STATUS: CHECKING..."));
+    if(lbl_frame_stats)    lv_label_set_text(lbl_frame_stats,    T("Toplam Frame: 0",     "Total Frames: 0"));
+    if(ui_response_label && !camera_active)
+                           lv_label_set_text(ui_response_label,  T("Kamera Baslatiliyor...","Camera Initializing..."));
+}
+
+// -----------------------------------------------------------------
 // GALLERY UI CALLBACK FUNCTIONS (called from main.ino)
 // -----------------------------------------------------------------
 void update_gallery_info_ui(uint16_t count, uint16_t size_mb) {
     if(lbl_gallery_count) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "%d goruntu / %d MB", count, size_mb);
+        snprintf(buf, sizeof(buf), T("%d goruntu / %d MB", "%d images / %d MB"), count, size_mb);
         lv_label_set_text(lbl_gallery_count, buf);
     }
     
@@ -367,7 +397,7 @@ void on_delete_result(uint8_t status) {
     
     if(ui_response_label) {
         if(status == 0) {
-            lv_label_set_text(ui_response_label, "Goruntu silindi");
+            lv_label_set_text(ui_response_label, T("Goruntu silindi", "Image deleted"));
             lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
             
             // Clear all thumbnails - gallery_request will reload them
@@ -385,7 +415,7 @@ void on_delete_result(uint8_t status) {
                 gallery_thumb_valid[i] = false;
             }
         } else {
-            lv_label_set_text(ui_response_label, "Silme basarisiz!");
+            lv_label_set_text(ui_response_label, T("Silme basarisiz!", "Delete failed!"));
             lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
         }
     }
@@ -423,7 +453,7 @@ static void gallery_delete_msgbox_cb(lv_event_t * e) {
     lv_obj_t * obj = lv_event_get_current_target(e);
     const char * btn_text = lv_msgbox_get_active_btn_text(obj);
     
-    if(btn_text && strcmp(btn_text, "SIL") == 0) {
+    if(btn_text && (strcmp(btn_text, "SIL") == 0 || strcmp(btn_text, "DELETE") == 0)) {
         if(gallery_selected_index >= 0) {
             Serial.printf("[UI] Confirming delete of image #%d\n", gallery_selected_index);
             send_delete_request((uint16_t)gallery_selected_index);
@@ -440,18 +470,20 @@ static void gallery_delete_msgbox_cb(lv_event_t * e) {
 static void show_delete_confirm_dialog() {
     if(gallery_selected_index < 0) {
         if(ui_response_label) {
-            lv_label_set_text(ui_response_label, "Once goruntu secin");
+            lv_label_set_text(ui_response_label, T("Once goruntu secin", "Select an image first"));
             lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0);
         }
         return;
     }
     
-    static const char * btns[] = {"SIL", "IPTAL", ""};
-    
+    static const char * btns_tr[] = {"SIL", "IPTAL", ""};
+    static const char * btns_en[] = {"DELETE", "CANCEL", ""};
+    const char ** btns = lang_tr ? (const char**)btns_tr : (const char**)btns_en;
+
     char msg[64];
-    snprintf(msg, sizeof(msg), "Goruntu #%d silinsin mi?", gallery_selected_index);
-    
-    delete_msgbox = lv_msgbox_create(NULL, "ONAY", msg, btns, false);
+    snprintf(msg, sizeof(msg), T("Goruntu #%d silinsin mi?", "Delete image #%d?"), gallery_selected_index);
+
+    delete_msgbox = lv_msgbox_create(NULL, T("ONAY", "CONFIRM"), msg, btns, false);
     lv_obj_add_event_cb(delete_msgbox, gallery_delete_msgbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_center(delete_msgbox);
     
@@ -461,7 +493,7 @@ static void show_delete_confirm_dialog() {
 }
 
 // -----------------------------------------------------------------
-// YARDIMCI BUTON FONKSİYONU
+// YARDIMCI BUTON FONKSIYONU
 // -----------------------------------------------------------------
 lv_obj_t* create_ui_button(lv_obj_t * parent, const char * text, const char * event_data, lv_style_t* style)
 {
@@ -497,7 +529,7 @@ void ui_Screen_Settings_init(void)
     lv_obj_clear_flag(settings_card, LV_OBJ_FLAG_SCROLLABLE); 
 
     lbl_settings_title = lv_label_create(settings_card);
-    lv_label_set_text(lbl_settings_title, "AYARLAR");
+    lv_label_set_text(lbl_settings_title, T("AYARLAR", "SETTINGS"));
     lv_obj_set_style_text_color(lbl_settings_title, lv_color_hex(0x00BCD4), 0);
     lv_obj_set_style_text_font(lbl_settings_title, current_font_large, 0);
     lv_obj_align(lbl_settings_title, LV_ALIGN_TOP_MID, 0, 10);
@@ -512,7 +544,7 @@ void ui_Screen_Settings_init(void)
     lv_obj_clear_flag(brightness_section, LV_OBJ_FLAG_SCROLLABLE);
 
     lbl_brightness = lv_label_create(brightness_section);
-    lv_label_set_text(lbl_brightness, "SCREEN BRIGHTNESS");
+    lv_label_set_text(lbl_brightness, T("EKRAN PARLAKLIGI", "SCREEN BRIGHTNESS"));
     lv_obj_set_style_text_color(lbl_brightness, lv_color_hex(0xFFB300), 0);
     lv_obj_set_style_text_font(lbl_brightness, current_font_medium, 0);
     lv_obj_align(lbl_brightness, LV_ALIGN_TOP_LEFT, 10, -4);
@@ -534,16 +566,15 @@ void ui_Screen_Settings_init(void)
     lv_obj_clear_flag(theme_section, LV_OBJ_FLAG_SCROLLABLE);
 
     lbl_theme = lv_label_create(theme_section);
-    lv_label_set_text(lbl_theme, "THEME");
+    lv_label_set_text(lbl_theme, T("TEMA", "THEME"));
     lv_obj_set_style_text_color(lbl_theme, lv_color_hex(0x4CAF50), 0);
     lv_obj_set_style_text_font(lbl_theme, current_font_medium, 0);
     lv_obj_align(lbl_theme, LV_ALIGN_TOP_LEFT, 10, -4);
 
-    // Light label (switch'in solunda)
-    lv_obj_t* light_label = lv_label_create(theme_section);
-    lv_label_set_text(light_label, "Light");
-    lv_obj_set_style_text_color(light_label, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(light_label, LV_ALIGN_BOTTOM_LEFT, 20, -18);
+    lbl_light_theme = lv_label_create(theme_section);
+    lv_label_set_text(lbl_light_theme, T("Acik", "Light"));
+    lv_obj_set_style_text_color(lbl_light_theme, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(lbl_light_theme, LV_ALIGN_BOTTOM_LEFT, 20, -18);
 
     theme_switch = lv_switch_create(theme_section);
     lv_obj_align(theme_switch, LV_ALIGN_BOTTOM_LEFT, 80, -15);
@@ -557,11 +588,10 @@ void ui_Screen_Settings_init(void)
         }
     }, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // Dark label (switch'in sağında)
-    lv_obj_t* theme_status = lv_label_create(theme_section);
-    lv_label_set_text(theme_status, "Dark");
-    lv_obj_set_style_text_color(theme_status, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(theme_status, LV_ALIGN_BOTTOM_LEFT, 140, -18);
+    lbl_dark_theme = lv_label_create(theme_section);
+    lv_label_set_text(lbl_dark_theme, T("Koyu", "Dark"));
+    lv_obj_set_style_text_color(lbl_dark_theme, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(lbl_dark_theme, LV_ALIGN_BOTTOM_LEFT, 140, -18);
 
     // --- TEXT SIZE ---
     lv_obj_t* text_section = lv_obj_create(settings_card);
@@ -573,7 +603,7 @@ void ui_Screen_Settings_init(void)
     lv_obj_clear_flag(text_section, LV_OBJ_FLAG_SCROLLABLE);
 
     lbl_text_size = lv_label_create(text_section);
-    lv_label_set_text(lbl_text_size, "TEXT SIZE");
+    lv_label_set_text(lbl_text_size, T("YAZI BOYUTU", "TEXT SIZE"));
     lv_obj_set_style_text_color(lbl_text_size, lv_color_hex(0xFD6D4E), 0);
     lv_obj_set_style_text_font(lbl_text_size, current_font_medium, 0);
     lv_obj_align(lbl_text_size, LV_ALIGN_TOP_LEFT, 10, -4);
@@ -591,6 +621,41 @@ void ui_Screen_Settings_init(void)
             update_text_sizes();
         }
     }, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // --- DIL / LANGUAGE ---
+    lv_obj_t* lang_section = lv_obj_create(settings_card);
+    lv_obj_set_size(lang_section, 710, 75);
+    lv_obj_align(lang_section, LV_ALIGN_TOP_MID, 0, 390);
+    lv_obj_set_style_bg_color(lang_section, lv_color_hex(0x252525), 0);
+    lv_obj_set_style_border_width(lang_section, 0, 0);
+    lv_obj_set_style_radius(lang_section, 8, 0);
+    lv_obj_clear_flag(lang_section, LV_OBJ_FLAG_SCROLLABLE);
+
+    lbl_lang_section = lv_label_create(lang_section);
+    lv_label_set_text(lbl_lang_section, T("DIL", "LANGUAGE"));
+    lv_obj_set_style_text_color(lbl_lang_section, lv_color_hex(0x00BCD4), 0);
+    lv_obj_set_style_text_font(lbl_lang_section, current_font_medium, 0);
+    lv_obj_align(lbl_lang_section, LV_ALIGN_LEFT_MID, 10, 0);
+
+    lv_obj_t* tr_lbl = lv_label_create(lang_section);
+    lv_label_set_text(tr_lbl, "TR");
+    lv_obj_set_style_text_color(tr_lbl, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(tr_lbl, LV_ALIGN_RIGHT_MID, -175, 0);
+
+    lang_switch = lv_switch_create(lang_section);
+    lv_obj_align(lang_switch, LV_ALIGN_RIGHT_MID, -120, 0);
+    if (!lang_tr) lv_obj_add_state(lang_switch, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(lang_switch, [](lv_event_t * e){
+        if(lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+            lang_tr = !lv_obj_has_state(lang_switch, LV_STATE_CHECKED);
+            apply_language();
+        }
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t* en_lbl = lv_label_create(lang_section);
+    lv_label_set_text(en_lbl, "EN");
+    lv_obj_set_style_text_color(en_lbl, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(en_lbl, LV_ALIGN_RIGHT_MID, -55, 0);
 
     // Back butonu (Sol üst köşe, küçük ok)
     lv_obj_t* btn_back = lv_btn_create(ui_Screen_Settings);
@@ -613,7 +678,7 @@ void ui_Screen_Menu_init(void)
     lv_obj_set_style_bg_color(ui_Screen_Menu, lv_color_hex(0x111111), 0);
     lv_obj_clear_flag(ui_Screen_Menu, LV_OBJ_FLAG_SCROLLABLE); 
 
-    // --- MENÜ İÇERİĞİ KARTI (scrollable for more content) ---
+    // --- MENU ICERIGI KARTI (scrollable for more content) ---
     lv_obj_t* menu_card = lv_obj_create(ui_Screen_Menu);
     lv_obj_add_style(menu_card, &style_card_bg, 0);
     lv_obj_set_size(menu_card, 750, 460);
@@ -624,7 +689,7 @@ void ui_Screen_Menu_init(void)
 
     // Başlık
     lbl_menu_title = lv_label_create(menu_card);
-    lv_label_set_text(lbl_menu_title, "SISTEM DIAGNOSTIK"); 
+    lv_label_set_text(lbl_menu_title, T("SISTEM DIAGNOSTIK", "SYSTEM DIAGNOSTICS"));
     lv_obj_set_style_text_color(lbl_menu_title, lv_color_hex(0x00BCD4), 0);
     lv_obj_set_style_text_font(lbl_menu_title, current_font_large, 0);
     lv_obj_align(lbl_menu_title, LV_ALIGN_TOP_MID, 0, 0);
@@ -639,13 +704,13 @@ void ui_Screen_Menu_init(void)
     lv_obj_clear_flag(gallery_card, LV_OBJ_FLAG_SCROLLABLE);
 
     lbl_gallery_title = lv_label_create(gallery_card);
-    lv_label_set_text(lbl_gallery_title, "GORUNTU GALERISI");
+    lv_label_set_text(lbl_gallery_title, T("GORUNTU GALERISI", "IMAGE GALLERY"));
     lv_obj_set_style_text_color(lbl_gallery_title, lv_color_hex(0x9C27B0), 0);
     lv_obj_set_style_text_font(lbl_gallery_title, current_font_medium, 0);
     lv_obj_align(lbl_gallery_title, LV_ALIGN_TOP_LEFT, 10, -5);
 
     lbl_gallery_count = lv_label_create(gallery_card);
-    lv_label_set_text(lbl_gallery_count, "Yukleniyor...");
+    lv_label_set_text(lbl_gallery_count, T("Yukleniyor...", "Loading..."));
     lv_obj_set_style_text_color(lbl_gallery_count, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_font(lbl_gallery_count, current_font_small, 0);
     lv_obj_align(lbl_gallery_count, LV_ALIGN_TOP_RIGHT, -10, -2);
@@ -807,13 +872,13 @@ void ui_Screen_Menu_init(void)
     lv_obj_clear_flag(cam_card, LV_OBJ_FLAG_SCROLLABLE);
 
     lbl_cam_title = lv_label_create(cam_card);
-    lv_label_set_text(lbl_cam_title, "KAMERA");
+    lv_label_set_text(lbl_cam_title, T("KAMERA", "CAMERA"));
     lv_obj_set_style_text_color(lbl_cam_title, lv_color_hex(0xFD6D4E), 0);
     lv_obj_set_style_text_font(lbl_cam_title, current_font_medium, 0);
     lv_obj_align(lbl_cam_title, LV_ALIGN_TOP_LEFT, 10, -5);
 
     lbl_camera_status = lv_label_create(cam_card);
-    lv_label_set_text(lbl_camera_status, "DURUM: KONTROL EDILIYOR...");
+    lv_label_set_text(lbl_camera_status, T("DURUM: KONTROL EDILIYOR...", "STATUS: CHECKING..."));
     lv_obj_set_width(lbl_camera_status, 580);
     lv_obj_set_style_text_color(lbl_camera_status, lv_color_hex(0xE0E0E0), 0);
     lv_obj_align(lbl_camera_status, LV_ALIGN_TOP_LEFT, 10, 18);
@@ -828,7 +893,7 @@ void ui_Screen_Menu_init(void)
     lv_obj_clear_flag(perf_card, LV_OBJ_FLAG_SCROLLABLE);
 
     lbl_perf_title = lv_label_create(perf_card);
-    lv_label_set_text(lbl_perf_title, "PERFORMANS");
+    lv_label_set_text(lbl_perf_title, T("PERFORMANS", "PERFORMANCE"));
     lv_obj_set_style_text_color(lbl_perf_title, lv_color_hex(0x4CAF50), 0);
     lv_obj_set_style_text_font(lbl_perf_title, current_font_medium, 0);
     lv_obj_align(lbl_perf_title, LV_ALIGN_TOP_LEFT, 10, -5);
@@ -846,7 +911,7 @@ void ui_Screen_Menu_init(void)
     lv_obj_align(lbl_heap, LV_ALIGN_TOP_LEFT, 10, 38);
 
     lbl_frame_stats = lv_label_create(perf_card);
-    lv_label_set_text(lbl_frame_stats, "Toplam Frame: 0");
+    lv_label_set_text(lbl_frame_stats, T("Toplam Frame: 0", "Total Frames: 0"));
     lv_obj_set_style_text_color(lbl_frame_stats, lv_color_hex(0xE0E0E0), 0);
     lv_obj_set_style_text_font(lbl_frame_stats, current_font_small, 0);
     lv_obj_align(lbl_frame_stats, LV_ALIGN_TOP_LEFT, 10, 58);
@@ -879,10 +944,10 @@ void ui_Screen_Menu_init(void)
         if(now - last_camera_check >= 10000) {
             uint32_t current_frames = ui_total_frames_counter;
             if(current_frames > last_camera_frames) {
-                snprintf(buf, sizeof(buf), " AKTIF | SON FRAME: #%u", (unsigned)current_frames);
+                snprintf(buf, sizeof(buf), T("AKTIF | SON FRAME: #%u", "ACTIVE | LAST FRAME: #%u"), (unsigned)current_frames);
                 lv_obj_set_style_text_color(lbl_camera_status, lv_color_hex(0x4CAF50), 0);
             } else {
-                snprintf(buf, sizeof(buf), "VERI YOK | BAGLANTIYI KONTROL EDIN");
+                snprintf(buf, sizeof(buf), "%s", T("VERI YOK | BAGLANTI KONTROL EDIN", "NO DATA | CHECK CONNECTION"));
                 lv_obj_set_style_text_color(lbl_camera_status, lv_color_hex(0xFF5722), 0);
             }
             lv_label_set_text(lbl_camera_status, buf);
@@ -911,7 +976,7 @@ void ui_Screen_Menu_init(void)
             lv_label_set_text(lbl_heap, buf);
 
             // Frame stats
-            snprintf(buf, sizeof(buf), "Toplam Frame: %u", (unsigned)ui_total_frames_counter);
+            snprintf(buf, sizeof(buf), T("Toplam Frame: %u", "Total Frames: %u"), (unsigned)ui_total_frames_counter);
             lv_label_set_text(lbl_frame_stats, buf);
         }
 
@@ -929,7 +994,7 @@ void ui_Screen_Main_init(void)
     lv_obj_set_size(ui_left_bar, 90, 480);
     lv_obj_align(ui_left_bar, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_clear_flag(ui_left_bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(ui_left_bar, lv_color_hex(0x3A3A3A), 0); // Açık gri
+    lv_obj_set_style_bg_color(ui_left_bar, lv_color_hex(0x3A3A3A), 0); // Acik gri
     lv_obj_set_style_bg_opa(ui_left_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ui_left_bar, 0, 0);
     lv_obj_set_style_pad_all(ui_left_bar, 0, 0);
@@ -941,7 +1006,7 @@ void ui_Screen_Main_init(void)
     lv_obj_add_event_cb(menu_btn, general_event_handler, LV_EVENT_CLICKED, (void*)"Menu");
     
     lbl_menu = lv_label_create(menu_btn);
-    lv_label_set_text(lbl_menu, "MENU");
+    lv_label_set_text(lbl_menu, T("MENU", "MENU"));
     lv_obj_set_style_text_font(lbl_menu, current_font_small, 0);
     lv_obj_center(lbl_menu);
 
@@ -952,7 +1017,7 @@ void ui_Screen_Main_init(void)
     lv_obj_add_event_cb(settings_btn, general_event_handler, LV_EVENT_CLICKED, (void*)"Ayarlar");
 
     lbl_settings = lv_label_create(settings_btn);
-    lv_label_set_text(lbl_settings, "AYAR");
+    lv_label_set_text(lbl_settings, T("AYAR", "SETTINGS"));
     lv_obj_set_style_text_font(lbl_settings, current_font_small, 0);
     lv_obj_center(lbl_settings);
 
@@ -965,7 +1030,7 @@ void ui_Screen_Main_init(void)
     
     // --- CAMERA STATUS LABEL (ABOVE PREVIEW) ---
     ui_response_label = lv_label_create(ui_main_panel);
-    lv_label_set_text(ui_response_label, "Camera Initializing...");
+    lv_label_set_text(ui_response_label, T("Kamera Baslatiliyor...", "Camera Initializing..."));
     lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFFB300), 0); 
     lv_obj_set_style_text_font(ui_response_label, current_font_large, 0);
     lv_obj_set_style_bg_color(ui_response_label, lv_color_hex(0x000000), 0);
@@ -974,7 +1039,7 @@ void ui_Screen_Main_init(void)
     lv_obj_set_style_radius(ui_response_label, 6, 0);
     lv_obj_align(ui_response_label, LV_ALIGN_TOP_MID, 0, 5);
     
-    // --- ILAB LOGO (SAĞ ÜST KÖŞE) ---
+    // --- ILAB LOGO (SAG UST KOSE) ---
     // External logo declaration (from ilablogo.c)
     extern const lv_img_dsc_t ilablogo;
     
@@ -993,15 +1058,13 @@ void ui_Screen_Main_init(void)
     Serial.println("[UI] ILAB logo image created");
 
     
-    // --- KAMERA ÖNİZLEME KARTI ---
+    // --- KAMERA ONIZLEME KARTI ---
     ui_img_panel = lv_obj_create(ui_main_panel);
-    lv_obj_add_style(ui_img_panel, &style_card_bg, 0); 
+    lv_obj_add_style(ui_img_panel, &style_card_bg, 0);
     lv_obj_set_size(ui_img_panel, 680, 360);
     lv_obj_align(ui_img_panel, LV_ALIGN_TOP_MID, 0, 40);
     lv_obj_clear_flag(ui_img_panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_shadow_width(ui_img_panel, 15, 0);
-    lv_obj_set_style_shadow_color(ui_img_panel, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_shadow_opa(ui_img_panel, LV_OPA_40, 0);
+    lv_obj_set_style_shadow_width(ui_img_panel, 0, 0);
     
     // Image Widget Oluştur - main.ino tarafından jpeg_img_dsc ile doldurulacak
     ui_camera_view = lv_img_create(ui_img_panel);
@@ -1027,13 +1090,11 @@ void ui_Screen_Main_init(void)
     lv_obj_t *btn_focus = lv_btn_create(btn_container);
     lv_obj_set_size(btn_focus, 280, 65);
     lv_obj_add_style(btn_focus, &style_btn_blue, 0);
-    lv_obj_set_style_shadow_width(btn_focus, 10, 0);
-    lv_obj_set_style_shadow_color(btn_focus, lv_color_hex(0x2196F3), 0);
-    lv_obj_set_style_shadow_opa(btn_focus, LV_OPA_30, 0);
+    lv_obj_set_style_shadow_width(btn_focus, 0, 0);
     lv_obj_add_event_cb(btn_focus, general_event_handler, LV_EVENT_CLICKED, (void*)"Focus");
     
     lbl_focus = lv_label_create(btn_focus);
-    lv_label_set_text(lbl_focus, "FOCUS");
+    lv_label_set_text(lbl_focus, T("ODAK", "FOCUS"));
     lv_obj_set_style_text_font(lbl_focus, current_font_xlarge, 0);
     lv_obj_center(lbl_focus);
 
@@ -1041,13 +1102,11 @@ void ui_Screen_Main_init(void)
     lv_obj_t *btn_capture = lv_btn_create(btn_container);
     lv_obj_set_size(btn_capture, 280, 65);
     lv_obj_add_style(btn_capture, &style_btn_orange, 0);
-    lv_obj_set_style_shadow_width(btn_capture, 10, 0);
-    lv_obj_set_style_shadow_color(btn_capture, lv_color_hex(0xFD6D4E), 0);
-    lv_obj_set_style_shadow_opa(btn_capture, LV_OPA_30, 0);
+    lv_obj_set_style_shadow_width(btn_capture, 0, 0);
     lv_obj_add_event_cb(btn_capture, general_event_handler, LV_EVENT_CLICKED, (void*)"Capture");
     
     lbl_capture = lv_label_create(btn_capture);
-    lv_label_set_text(lbl_capture, "CAPTURE");
+    lv_label_set_text(lbl_capture, T("CEK", "CAPTURE"));
     lv_obj_set_style_text_font(lbl_capture, current_font_xlarge, 0);
     lv_obj_center(lbl_capture);
 
@@ -1060,16 +1119,15 @@ void ui_Screen_Main_init(void)
         if(ui_total_frames_counter > last_frame_count) {
             if(!camera_active) {
                 camera_active = true;
-                lv_label_set_text(ui_response_label, "Camera Active");
+                lv_label_set_text(ui_response_label, T("Kamera Aktif", "Camera Active"));
                 lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0x4CAF50), 0);
             }
             last_frame_count = ui_total_frames_counter;
             last_camera_update = now;
         } else {
-            // No new frames for 8 seconds
             if(camera_active && (now - last_camera_update > 8000)) {
                 camera_active = false;
-                lv_label_set_text(ui_response_label, "Camera Disconnected");
+                lv_label_set_text(ui_response_label, T("Kamera Baglantisi Kesildi", "Camera Disconnected"));
                 lv_obj_set_style_text_color(ui_response_label, lv_color_hex(0xFF5722), 0);
             }
         }
@@ -1082,15 +1140,16 @@ void ui_Screen_Main_init(void)
 void ui_init(void)
 {
     create_styles();
-    update_text_sizes(); // Initialize font sizes before creating screens
-    ui_Screen_Main_init();     
-    ui_Screen_Settings_init(); 
-    ui_Screen_Menu_init();     
-    lv_scr_load(ui_Screen_Main); 
+    update_text_sizes();
+    ui_Screen_Main_init();
+    ui_Screen_Settings_init();
+    ui_Screen_Menu_init();
+    apply_language();
+    lv_scr_load(ui_Screen_Main);
 }
 
 // -----------------------------------------------------------------
-// ARKA PLAN GÖREVLERİ ve STATISTICS
+// ARKA PLAN GOREVLERI ve STATISTICS
 // -----------------------------------------------------------------
 
 // notify: frame alındığında çağır

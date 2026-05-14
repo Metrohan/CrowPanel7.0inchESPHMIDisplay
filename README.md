@@ -40,15 +40,37 @@ Bu proje, **CrowPanel 7.0 inç (ESP32-S3)** tabanlı endüstriyel ekranlar için
 
 ### ⚙️ Gereksinimler & Kurulum
 
-#### 1. Arduino IDE Yapılandırması
+#### 1. Gerekli Yazılımlar
+
+- Arduino IDE veya PlatformIO
+- **ESP32 Board eklentisi sürüm 2.0.8**
+  - File > Preferences > Additional boards manager URLs kısmına şu URL'yi ekle:
+    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
+  - Ardından Board Manager'dan **esp32 by Espressif Systems** sürüm **2.0.8**'i indir.
+- Aşağıdaki kütüphaneler (Arduino IDE kullanıyorsan):
+  - LovyanGFX
+  - lvgl
+  - PCA9557
+
+#### 2. Kütüphane Kurulumu
+`libraries` klasörü içerisindeki kütüphaneleri Arduino `libraries` klasörünüze kopyalayın.
+
+#### 3. Kodun Yüklenmesi
+
+Projeyi klonla:
+```bash
+git clone https://github.com/Metrohan/CrowPanel7.0inchESPHMIDisplay.git
+```
+
+- Arduino IDE ile `main.ino` dosyasını aç.
 - **Board:** `ESP32S3 Dev Module`
 - **USB CDC On Boot:** `Enabled`
 - **Flash Mode:** `QIO 80MHz`
 - **Partition Scheme:** `Huge APP (3MB No OTA/1MB SPIFFS)`
-- **PSRAM:** `OPI PSRAM` (ÇOK ÖNEMLİ).
+- **PSRAM:** `OPI PSRAM` (ÇOK ÖNEMLİ)
+- Kodu karta yükle; yükleme gerçekleşmezse IDE'yi kapatıp tekrar aç.
 
-#### 2. Kütüphane Kurulumu
-`libraries` klasörü içerisindeki kütüphaneleri Arduino kütüphane klasörünüze kopyalayın.
+> **Not:** Baud ayarını koddaki değerle aynı yapmayı unutma. Dokunmatik ekran çalışmıyorsa Serial Monitor'de `Dokunmatik algılandı` mesajını kontrol et. Mesajı göremiyorsan I2C Scanner ile I2C adresini tespit et ve `gfx_conf.h` içindeki `cfg.i2c_addr = 0x14;` satırını güncelle.
 
 ---
 
@@ -105,15 +127,37 @@ This project is a high-performance HMI (Human-Machine Interface) template optimi
 
 ### ⚙️ Requirements & Setup
 
-#### 1. Arduino IDE Configuration
+#### 1. Required Software
+
+- Arduino IDE or PlatformIO
+- **ESP32 Board package version 2.0.8**
+  - Go to File > Preferences > Additional boards manager URLs and add:
+    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
+  - Then install **esp32 by Espressif Systems** version **2.0.8** from the Board Manager.
+- The following libraries (if using Arduino IDE):
+  - LovyanGFX
+  - lvgl
+  - PCA9557
+
+#### 2. Library Installation
+Copy the libraries inside the `libraries` folder to your Arduino `libraries` directory.
+
+#### 3. Uploading the Code
+
+Clone the project:
+```bash
+git clone https://github.com/Metrohan/CrowPanel7.0inchESPHMIDisplay.git
+```
+
+- Open `main.ino` with Arduino IDE.
 - **Board:** `ESP32S3 Dev Module`
 - **USB CDC On Boot:** `Enabled`
 - **Flash Mode:** `QIO 80MHz`
 - **Partition Scheme:** `Huge APP (3MB No OTA/1MB SPIFFS)`
-- **PSRAM:** `OPI PSRAM` (CRITICAL: Required for image processing).
+- **PSRAM:** `OPI PSRAM` (CRITICAL: Required for image processing)
+- Upload the code; if it fails, close and reopen the IDE.
 
-#### 2. Library Installation
-Copy the libraries inside the `libraries` folder to your Arduino libraries directory.
+> **Note:** Make sure the baud rate matches the value in the code. If the touchscreen is not working, check the Serial Monitor for the touch detection message. If not detected, use an I2C Scanner to find the correct address and update `cfg.i2c_addr = 0x14;` in `gfx_conf.h`.
 
 ---
 
