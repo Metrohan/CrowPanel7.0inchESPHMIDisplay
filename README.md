@@ -1,3 +1,7 @@
+> **Project Status: Active**
+>
+> This project is actively maintained. Current priorities and planned work are documented below or in GitHub Issues.
+
 # CrowPanel 7.0" ESP32-S3 HMI Display Performance Template
 
 [Türkçe](#türkçe) | [English](#english)
