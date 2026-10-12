@@ -79,7 +79,7 @@ git clone https://github.com/Metrohan/CrowPanel7.0inchESPHMIDisplay.git
 ---
 
 ### 🤝 İş Birliği
-Bu proje, **i-Lab** ile hazırlanmıştır. Daha fazla bilgi ve iletişim için:
+Bu proje, **piei-Lab** ile hazırlanmıştır. Daha fazla bilgi ve iletişim için:
 
 🌐 **Web sitesi:** [pieilab.com](http://www.pieilab.com)  
 🔗 **LinkedIn:** [PIE i-Lab](https://www.linkedin.com/company/pielabb)
